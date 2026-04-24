@@ -38,13 +38,14 @@ function pfxParaPem(pfxBuffer: Buffer, senha: string): PemMaterial {
   try {
     // Tenta com a senha fornecida
     p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, senha);
-  } catch (e1) {
+  } catch (e1: unknown) {
     try {
       // Alguns PFX usam senha vazia mesmo quando uma é informada
       p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, '');
-    } catch (e2) {
+    } catch (e2: unknown) {
+      const msg = e1 instanceof Error ? e1.message : String(e1);
       throw new Error(
-        `Falha ao abrir o PFX (mac verify failure). Verifique a SENHA_CERT_PFX. Detalhe: ${(e1 as Error).message}`
+        `Falha ao abrir o PFX (mac verify failure). Verifique a SENHA_CERT_PFX. Detalhe: ${msg}`
       );
     }
   }
@@ -70,8 +71,6 @@ function pfxParaPem(pfxBuffer: Buffer, senha: string): PemMaterial {
   }
 
   // Identifica o certificado de entidade final (end-entity) e a cadeia (CAs)
-  // O end-entity é aquele cujo subject != issuer (não é auto-assinado)
-  // e geralmente é o primeiro, mas vamos ser explícitos.
   const allCerts = certBags
     .filter((b) => b.cert)
     .map((b) => b.cert!);
@@ -88,8 +87,7 @@ function pfxParaPem(pfxBuffer: Buffer, senha: string): PemMaterial {
     );
   });
 
-  // O certificado de entidade final é aquele que NÃO é issuer de nenhum outro
-  // Heurística simples: pega o primeiro que não é auto-assinado
+  // O certificado de entidade final é aquele que NÃO é auto-assinado
   let endEntityIdx = 0;
   for (let i = 0; i < allCerts.length; i++) {
     const c = allCerts[i];
@@ -121,7 +119,6 @@ function pfxParaPem(pfxBuffer: Buffer, senha: string): PemMaterial {
   }
 
   // PRIORIDADE TOTAL: se CERT_CHAIN_BASE64 está definida, ela SOBRESCREVE a cadeia do PFX.
-  // Isso garante que a cadeia ICP-Brasil completa seja usada no handshake mTLS.
   if (chainPresente) {
     try {
       // Limpeza: trim + remoção de quebras de linha (Windows \r\n e Unix \n) e espaços
@@ -144,8 +141,9 @@ function pfxParaPem(pfxBuffer: Buffer, senha: string): PemMaterial {
           `✅ Cadeia ICP-Brasil carregada de CERT_CHAIN_BASE64 (${count} certificado(s)) — PRIORIDADE TOTAL ativa`
         );
       }
-    } catch (err) {
-      console.error('❌ Falha ao decodificar CERT_CHAIN_BASE64:', (err as Error).message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('❌ Falha ao decodificar CERT_CHAIN_BASE64:', msg);
     }
   } else if (chainCerts.length === 0) {
     console.warn(
@@ -274,18 +272,19 @@ export const emitirNotaNacional = async (xmlString: string): Promise<AdnEmission
       chaveAcesso: response.data?.chaveAcesso,
       respostaRaw: response.data,
     };
-  } catch (error: any) {
-    const status = error.response?.status || 'N/A';
-    const body = error.response?.data;
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: any }; message?: string };
+    const status = err.response?.status || 'N/A';
+    const body = err.response?.data;
 
-    console.error(`❌ Erro na integração ADN (HTTP ${status}):`, body || error.message);
+    console.error(`❌ Erro na integração ADN (HTTP ${status}):`, body || err.message);
 
     return {
       sucesso: false,
       mensagem:
         body?.message ||
         body?.mensagem ||
-        error.message ||
+        err.message ||
         'Erro ao processar envio nacional.',
       erros: body?.erros || (body ? [body] : undefined),
       respostaRaw: body,
