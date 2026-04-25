@@ -376,3 +376,4 @@ export const emitirNotaNacional = async (xmlString: string): Promise => {
 5. **🔐 AUDITORIA AGENTE HTTPS**: confirma `rejectUnauthorized=false` em homologação para isolar se o problema é cadeia de confiança.
 
 Apliquei as 5 auditorias profundas no `adnService.ts`. Cole no GitHub, redeploye no Railway e me mande os logs — com eles vamos identificar com precisão se o 495 vem de senha errada, PFX corrompido ou cadeia ICP-Brasil incompleta.
+ 
