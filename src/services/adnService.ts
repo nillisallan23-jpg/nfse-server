@@ -1,3 +1,17 @@
+Vou aplicar todas as 5 melhorias de auditoria no `adnService.ts`
+ 0 ? 'Sim' : 'NÃO'} | ` +\\n      `Caracteres: ${senhaLen} | ` +\\n      `Tipo: ${typeof senha}`\\n  );\\n  if (senhaLen === 0) {\\n    console.warn(\\n      '⚠️  SENHA VAZIA detectada — node-forge tentará abrir o PFX sem senha. ' +\\n        'Confirme que SENHA_CERT_PFX está configurada corretamente no Railway.'\\n    );\\n  }\\n\\n  // node-forge precisa do conteúdo binário em string \\\"binary\\\"\\n  const pfxBinary = pfxBuffer.toString('binary');\\n\\n  let p12Asn1: forge.asn1.Asn1;\\n  try {\\n    p12Asn1 = forge.asn1.fromDer(pfxBinary);\\n    console.log(`✅ PFX decodificado em ASN.1 com sucesso (${pfxBuffer.length} bytes).`);\\n  } catch (errAsn1: unknown) {\\n    const msg = errAsn1 instanceof Error ? errAsn1.message : String(errAsn1);\\n    console.error(`❌ FALHA ASN.1: o arquivo PFX parece corrompido ou não é DER válido. Detalhe: ${msg}`);\\n    throw new Error(`PFX corrompido ou formato inválido: ${msg}`);\\n  }\\n\\n  let p12: forge.pkcs12.Pkcs12Pfx;\\n  try {\\n    // Tenta com a senha fornecida\\n    p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, senha);\\n    console.log('✅ PFX aberto com sucesso usando SENHA_CERT_PFX.');\\n  } catch (e1: unknown) {\\n    const msg1 = e1 instanceof Error ? e1.message : String(e1);\\n    console.error(`⚠️  Tentativa 1 (com senha de ${senhaLen} chars) FALHOU: \\\"${msg1}\\\"`);\\n\\n    try {\\n      // Alguns PFX usam senha vazia mesmo quando uma é informada\\n      p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, '');\\n      console.log('✅ PFX aberto com SENHA VAZIA (a senha configurada estava errada).');\\n    } catch (e2: unknown) {\\n      const msg2 = e2 instanceof Error ? e2.message : String(e2);\\n      console.error(`❌ Tentativa 2 (senha vazia) também FALHOU: \\\"${msg2}\\\"`);\\n      console.error(\\n        '🚨 DIAGNÓSTICO: A senha do certificado está incorreta OU o arquivo PFX está corrompido.\\\\n' +\\n          '   • Verifique SENHA_CERT_PFX no Railway (cuidado com espaços e quebras de linha)\\\\n' +\\n          '   • Reexporte o PFX do certificado original e atualize CERT_PFX_BASE64'\\n      );\\n      throw new Error(\\n        `Falha ao abrir o PFX (mac verify failure). Senha incorreta ou arquivo corrompido. Detalhe: ${msg1}`\\n      );\\n    }\\n  }\"}">
+
+ {\\n    const cn = cert.subject.getField('CN')?.value || 'sem CN';\\n    const issuer = cert.issuer.getField('CN')?.value || 'sem issuer';\\n    const isSelfSigned = cn === issuer;\\n    console.log(\\n      `   [${idx}] CN: \\\"${cn}\\\" | Issuer: \\\"${issuer}\\\"${isSelfSigned ? ' (ROOT/self-signed)' : ''}`\\n    );\\n  });\", \"first_replaced_line\": 80, \"last_replaced_line\": 90, \"replace\": \"  console.log(`🔗 ═══ CADEIA DE CERTIFICADOS DO PFX (${allCerts.length} cert) ═══`);\\n\\n  // Loga cada certificado da cadeia com detalhes completos\\n  allCerts.forEach((cert, idx) => {\\n    const cn = cert.subject.getField('CN')?.value || 'sem CN';\\n    const o = cert.subject.getField('O')?.value || 'sem O';\\n    const ou = cert.subject.getField('OU')?.value || 'sem OU';\\n    const issuerCn = cert.issuer.getField('CN')?.value || 'sem issuer';\\n    const issuerO = cert.issuer.getField('O')?.value || 'sem issuer-O';\\n    const isSelfSigned = cn === issuerCn;\\n    const validFrom = cert.validity.notBefore.toISOString().substring(0, 10);\\n    const validTo = cert.validity.notAfter.toISOString().substring(0, 10);\\n    const serial = cert.serialNumber?.substring(0, 16) || 'sem serial';\\n    const expirado = cert.validity.notAfter < new Date();\\n\\n    console.log(`   ┌─ [${idx}] ${isSelfSigned ? '🔒 ROOT (self-signed)' : '📄 CERT'}`);\\n    console.log(`   │  Subject CN : \\\"${cn}\\\"`);\\n    console.log(`   │  Subject O  : \\\"${o}\\\" | OU: \\\"${ou}\\\"`);\\n    console.log(`   │  Issuer  CN : \\\"${issuerCn}\\\"`);\\n    console.log(`   │  Issuer  O  : \\\"${issuerO}\\\"`);\\n    console.log(`   │  Validade   : ${validFrom} → ${validTo}${expirado ? ' ⚠️  EXPIRADO!' : ' ✅'}`);\\n    console.log(`   └─ Serial    : ${serial}...`);\\n  });\\n  console.log(`🔗 ═══════════════════════════════════════════════════════`);\"}">
+
+ 50000) {\\n      console.warn(`⚠️  PFX muito grande (${stats.size} bytes) — verifique se não é o arquivo errado.`);\\n    }\\n\\n    // Leitura como buffer binário puro — sem encoding\\n    pfxBuffer = fs.readFileSync(pfxPath);\\n    console.log(`🔐 Certificado carregado do disco: ${pfxPath} (${pfxBuffer.length} bytes lidos)`);\\n\\n    // Confere o \\\"magic byte\\\" do DER (0x30 = SEQUENCE ASN.1)\\n    if (pfxBuffer[0] !== 0x30) {\\n      console.warn(\\n        `⚠️  Primeiro byte = 0x${pfxBuffer[0].toString(16)} (esperado 0x30). ` +\\n          'O arquivo pode não ser um PFX/DER válido — talvez esteja em base64?'\\n      );\\n    }\\n  }\"}">
+
+ 0) {\\n    console.log(`🔐 Agente HTTPS configurado com ${caArray.length} CA(s) na cadeia.`);\\n  } else {\\n    console.warn('⚠️  Agente HTTPS sem CA chain — handshake pode falhar (HTTP 495).');\\n  }\\n\\n  return new https.Agent({\\n    key: keyPem,\\n    cert: certPem,\\n    ca: caArray,\\n    rejectUnauthorized: process.env.ADN_AMBIENTE === 'producao',\\n  });\\n}\", \"first_replaced_line\": 242, \"last_replaced_line\": 254, \"replace\": \"  if (caArray && caArray.length > 0) {\\n    console.log(`🔐 Agente HTTPS configurado com ${caArray.length} CA(s) na cadeia.`);\\n  } else {\\n    console.warn('⚠️  Agente HTTPS sem CA chain — handshake pode falhar (HTTP 495).');\\n  }\\n\\n  // ── AUDITORIA: rejectUnauthorized ─────────────────────\\n  // Em PRODUÇÃO: true (valida cadeia do servidor — segurança máxima)\\n  // Em HOMOLOGAÇÃO/DEV: false (permite testar sem barreira de cadeia de confiança)\\n  const ambiente = process.env.ADN_AMBIENTE || 'homologacao';\\n  const rejectUnauthorized = ambiente === 'producao';\\n  console.log(\\n    `🔐 AUDITORIA AGENTE HTTPS: ambiente=\\\"${ambiente}\\\" | ` +\\n      `rejectUnauthorized=${rejectUnauthorized} ` +\\n      `${rejectUnauthorized ? '(modo SEGURO — valida cadeia)' : '(modo TESTE — ignora cadeia)'}`\\n  );\\n\\n  return new https.Agent({\\n    key: keyPem,\\n    cert: certPem,\\n    ca: caArray,\\n    rejectUnauthorized,\\n  });\\n}\"}">
+
+Agora vou verificar o resultado final e te mandar o código completo:
+
+Pronto! Aqui está o **código completo e atualizado** de `nfse-server/src/services/adnService.ts` com todas as 5 auditorias solicitadas. Cole no GitHub e faça commit:
+
+```typescript
 import axios from 'axios';
 import * as https from 'https';
 import * as fs from 'fs';
@@ -25,27 +39,55 @@ interface PemMaterial {
 /**
  * Converte um PFX (.pfx/.p12) — inclusive os "legacy" gerados com RC2/3DES —
  * em PEM (chave + certificado + CA chain) usando node-forge puro em JS.
- *
- * Isso evita o erro "mac verify failure" / "unsupported" do OpenSSL 3
- * que afeta PFX antigos quando lidos diretamente pelo https.Agent.
  */
 function pfxParaPem(pfxBuffer: Buffer, senha: string): PemMaterial {
-  // node-forge precisa do conteúdo binário em string "binary"
+  // ── AUDITORIA: Debug da senha (sem expor o valor) ────────
+  const senhaLen = senha?.length ?? 0;
+  console.log(
+    `🔑 AUDITORIA SENHA: SENHA_CERT_PFX presente? ${senhaLen > 0 ? 'Sim' : 'NÃO'} | ` +
+      `Caracteres: ${senhaLen} | ` +
+      `Tipo: ${typeof senha}`
+  );
+  if (senhaLen === 0) {
+    console.warn(
+      '⚠️  SENHA VAZIA detectada — node-forge tentará abrir o PFX sem senha. ' +
+        'Confirme que SENHA_CERT_PFX está configurada corretamente no Railway.'
+    );
+  }
+
   const pfxBinary = pfxBuffer.toString('binary');
-  const p12Asn1 = forge.asn1.fromDer(pfxBinary);
+
+  let p12Asn1: forge.asn1.Asn1;
+  try {
+    p12Asn1 = forge.asn1.fromDer(pfxBinary);
+    console.log(`✅ PFX decodificado em ASN.1 com sucesso (${pfxBuffer.length} bytes).`);
+  } catch (errAsn1: unknown) {
+    const msg = errAsn1 instanceof Error ? errAsn1.message : String(errAsn1);
+    console.error(`❌ FALHA ASN.1: o arquivo PFX parece corrompido ou não é DER válido. Detalhe: ${msg}`);
+    throw new Error(`PFX corrompido ou formato inválido: ${msg}`);
+  }
 
   let p12: forge.pkcs12.Pkcs12Pfx;
   try {
-    // Tenta com a senha fornecida
     p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, senha);
+    console.log('✅ PFX aberto com sucesso usando SENHA_CERT_PFX.');
   } catch (e1: unknown) {
+    const msg1 = e1 instanceof Error ? e1.message : String(e1);
+    console.error(`⚠️  Tentativa 1 (com senha de ${senhaLen} chars) FALHOU: "${msg1}"`);
+
     try {
-      // Alguns PFX usam senha vazia mesmo quando uma é informada
       p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, '');
+      console.log('✅ PFX aberto com SENHA VAZIA (a senha configurada estava errada).');
     } catch (e2: unknown) {
-      const msg = e1 instanceof Error ? e1.message : String(e1);
+      const msg2 = e2 instanceof Error ? e2.message : String(e2);
+      console.error(`❌ Tentativa 2 (senha vazia) também FALHOU: "${msg2}"`);
+      console.error(
+        '🚨 DIAGNÓSTICO: A senha do certificado está incorreta OU o arquivo PFX está corrompido.\n' +
+          '   • Verifique SENHA_CERT_PFX no Railway (cuidado com espaços e quebras de linha)\n' +
+          '   • Reexporte o PFX do certificado original e atualize CERT_PFX_BASE64'
+      );
       throw new Error(
-        `Falha ao abrir o PFX (mac verify failure). Verifique a SENHA_CERT_PFX. Detalhe: ${msg}`
+        `Falha ao abrir o PFX (mac verify failure). Senha incorreta ou arquivo corrompido. Detalhe: ${msg1}`
       );
     }
   }
@@ -70,24 +112,32 @@ function pfxParaPem(pfxBuffer: Buffer, senha: string): PemMaterial {
     throw new Error('Certificado não encontrado no PFX.');
   }
 
-  // Identifica o certificado de entidade final (end-entity) e a cadeia (CAs)
-  const allCerts = certBags
-    .filter((b) => b.cert)
-    .map((b) => b.cert!);
+  const allCerts = certBags.filter((b) => b.cert).map((b) => b.cert!);
 
-  console.log(`🔗 Cadeia de certificados encontrada no PFX: ${allCerts.length} certificado(s)`);
+  console.log(`🔗 ═══ CADEIA DE CERTIFICADOS DO PFX (${allCerts.length} cert) ═══`);
 
-  // Loga cada certificado da cadeia para debug
   allCerts.forEach((cert, idx) => {
     const cn = cert.subject.getField('CN')?.value || 'sem CN';
-    const issuer = cert.issuer.getField('CN')?.value || 'sem issuer';
-    const isSelfSigned = cn === issuer;
-    console.log(
-      `   [${idx}] CN: "${cn}" | Issuer: "${issuer}"${isSelfSigned ? ' (ROOT/self-signed)' : ''}`
-    );
-  });
+    const o = cert.subject.getField('O')?.value || 'sem O';
+    const ou = cert.subject.getField('OU')?.value || 'sem OU';
+    const issuerCn = cert.issuer.getField('CN')?.value || 'sem issuer';
+    const issuerO = cert.issuer.getField('O')?.value || 'sem issuer-O';
+    const isSelfSigned = cn === issuerCn;
+    const validFrom = cert.validity.notBefore.toISOString().substring(0, 10);
+    const validTo = cert.validity.notAfter.toISOString().substring(0, 10);
+    const serial = cert.serialNumber?.substring(0, 16) || 'sem serial';
+    const expirado = cert.validity.notAfter < new Date();
 
-  // O certificado de entidade final é aquele que NÃO é auto-assinado
+    console.log(`   ┌─ [${idx}] ${isSelfSigned ? '🔒 ROOT (self-signed)' : '📄 CERT'}`);
+    console.log(`   │  Subject CN : "${cn}"`);
+    console.log(`   │  Subject O  : "${o}" | OU: "${ou}"`);
+    console.log(`   │  Issuer  CN : "${issuerCn}"`);
+    console.log(`   │  Issuer  O  : "${issuerO}"`);
+    console.log(`   │  Validade   : ${validFrom} → ${validTo}${expirado ? ' ⚠️  EXPIRADO!' : ' ✅'}`);
+    console.log(`   └─ Serial    : ${serial}...`);
+  });
+  console.log(`🔗 ═══════════════════════════════════════════════════════`);
+
   let endEntityIdx = 0;
   for (let i = 0; i < allCerts.length; i++) {
     const c = allCerts[i];
@@ -102,7 +152,6 @@ function pfxParaPem(pfxBuffer: Buffer, senha: string): PemMaterial {
   const endEntityCert = allCerts[endEntityIdx];
   const certPem = forge.pki.certificateToPem(endEntityCert);
 
-  // Cadeia = todos os outros certificados (intermediários + raiz)
   const chainCerts = allCerts.filter((_, idx) => idx !== endEntityIdx);
   let caPem = chainCerts.map((c) => forge.pki.certificateToPem(c)).join('\n');
 
@@ -118,24 +167,17 @@ function pfxParaPem(pfxBuffer: Buffer, senha: string): PemMaterial {
     console.log(`🔍 Tamanho total da variável: ${rawChainEnv!.length} chars`);
   }
 
-  // PRIORIDADE TOTAL: se CERT_CHAIN_BASE64 está definida, ela SOBRESCREVE a cadeia do PFX.
   if (chainPresente) {
     try {
-      // Limpeza: trim + remoção de quebras de linha (Windows \r\n e Unix \n) e espaços
-      const cleanedBase64 = rawChainEnv!
-        .trim()
-        .replace(/[\r\n\s]/g, '');
+      const cleanedBase64 = rawChainEnv!.trim().replace(/[\r\n\s]/g, '');
       const chainBuffer = Buffer.from(cleanedBase64, 'base64');
       const chainPemFromEnv = chainBuffer.toString('utf-8');
       const matches = chainPemFromEnv.match(/-----BEGIN CERTIFICATE-----/g);
       const count = matches?.length || 0;
 
       if (count === 0) {
-        console.error(
-          '❌ CERT_CHAIN_BASE64 decodificada mas não contém certificados PEM válidos.'
-        );
+        console.error('❌ CERT_CHAIN_BASE64 decodificada mas não contém certificados PEM válidos.');
       } else {
-        // FORÇA o uso da cadeia da variável de ambiente (PRIORIDADE TOTAL)
         caPem = chainPemFromEnv;
         console.log(
           `✅ Cadeia ICP-Brasil carregada de CERT_CHAIN_BASE64 (${count} certificado(s)) — PRIORIDADE TOTAL ativa`
@@ -159,10 +201,6 @@ function pfxParaPem(pfxBuffer: Buffer, senha: string): PemMaterial {
   return { keyPem, certPem, caPem: caPem || undefined };
 }
 
-/**
- * Cria o agente HTTPS com mTLS. Usa PEM (gerado a partir do PFX via node-forge),
- * que funciona em qualquer versão do OpenSSL/Node sem precisar de flags legacy.
- */
 function criarAgenteMTLS(): https.Agent {
   const pfxPath = process.env.CERT_PFX_PATH;
   const pfxPassword = process.env.SENHA_CERT_PFX || process.env.CERT_PFX_PASSWORD || '';
@@ -171,23 +209,60 @@ function criarAgenteMTLS(): https.Agent {
 
   if (process.env.CERT_PFX_BASE64) {
     pfxBuffer = Buffer.from(process.env.CERT_PFX_BASE64, 'base64');
-    console.log(`🔐 Certificado carregado via CERT_PFX_BASE64 (${pfxBuffer.length} bytes)`);
+    console.log(`🔐 AUDITORIA: Certificado via CERT_PFX_BASE64 → ${pfxBuffer.length} bytes`);
+    if (pfxBuffer.length < 1000) {
+      console.warn(`⚠️  PFX muito pequeno (${pfxBuffer.length} bytes) — provavelmente truncado/corrompido!`);
+    }
   } else {
     if (!pfxPath) {
       throw new Error('Variável CERT_PFX_PATH não definida.');
     }
+
+    // ── AUDITORIA: Verificação completa do arquivo ────────
+    console.log(`🔍 AUDITORIA ARQUIVO: Verificando "${pfxPath}"...`);
     if (!fs.existsSync(pfxPath)) {
+      console.error(`❌ AUDITORIA: Arquivo NÃO EXISTE em "${pfxPath}"`);
+      console.error(`   CWD atual: ${process.cwd()}`);
+      try {
+        const certsDir = pfxPath.substring(0, pfxPath.lastIndexOf('/')) || './certs';
+        if (fs.existsSync(certsDir)) {
+          const files = fs.readdirSync(certsDir);
+          console.error(`   Conteúdo de "${certsDir}": [${files.join(', ')}]`);
+        } else {
+          console.error(`   Diretório "${certsDir}" também não existe.`);
+        }
+      } catch (e) {
+        console.error(`   Não foi possível listar o diretório.`);
+      }
       throw new Error(`Certificado não encontrado em: ${pfxPath}`);
     }
-    // Leitura como buffer binário puro — sem encoding
+
+    const stats = fs.statSync(pfxPath);
+    console.log(
+      `✅ AUDITORIA: Arquivo encontrado | Tamanho: ${stats.size} bytes | ` +
+        `Modificado: ${stats.mtime.toISOString()} | ` +
+        `Permissões: ${(stats.mode & 0o777).toString(8)}`
+    );
+    if (stats.size < 1000) {
+      console.warn(`⚠️  PFX muito pequeno (${stats.size} bytes) — provavelmente corrompido!`);
+    }
+    if (stats.size > 50000) {
+      console.warn(`⚠️  PFX muito grande (${stats.size} bytes) — verifique se não é o arquivo errado.`);
+    }
+
     pfxBuffer = fs.readFileSync(pfxPath);
-    console.log(`🔐 Certificado carregado do disco: ${pfxPath} (${pfxBuffer.length} bytes)`);
+    console.log(`🔐 Certificado carregado do disco: ${pfxPath} (${pfxBuffer.length} bytes lidos)`);
+
+    if (pfxBuffer[0] !== 0x30) {
+      console.warn(
+        `⚠️  Primeiro byte = 0x${pfxBuffer[0].toString(16)} (esperado 0x30). ` +
+          'O arquivo pode não ser um PFX/DER válido — talvez esteja em base64?'
+      );
+    }
   }
 
-  // Converte PFX → PEM (resolve mac verify failure no OpenSSL 3)
   const { keyPem, certPem, caPem } = pfxParaPem(pfxBuffer, pfxPassword);
 
-  // Split CA bundle em array (Node aceita melhor múltiplos certificados assim)
   const caArray = caPem
     ? caPem
         .split(/(?=-----BEGIN CERTIFICATE-----)/g)
@@ -201,30 +276,31 @@ function criarAgenteMTLS(): https.Agent {
     console.warn('⚠️  Agente HTTPS sem CA chain — handshake pode falhar (HTTP 495).');
   }
 
+  // ── AUDITORIA: rejectUnauthorized ─────────────────────
+  const ambiente = process.env.ADN_AMBIENTE || 'homologacao';
+  const rejectUnauthorized = ambiente === 'producao';
+  console.log(
+    `🔐 AUDITORIA AGENTE HTTPS: ambiente="${ambiente}" | ` +
+      `rejectUnauthorized=${rejectUnauthorized} ` +
+      `${rejectUnauthorized ? '(modo SEGURO — valida cadeia)' : '(modo TESTE — ignora cadeia)'}`
+  );
+
   return new https.Agent({
     key: keyPem,
     cert: certPem,
     ca: caArray,
-    rejectUnauthorized: process.env.ADN_AMBIENTE === 'producao',
+    rejectUnauthorized,
   });
 }
 
-/**
- * Emite uma NFS-e no padrão ADN/Serpro Nacional.
- *
- * Pipeline: XML → GZIP → Base64 → JSON → POST mTLS → Resposta
- */
-export const emitirNotaNacional = async (xmlString: string): Promise<AdnEmissionResponse> => {
+export const emitirNotaNacional = async (xmlString: string): Promise => {
   try {
-    // ── 1. Compactar o XML com GZip ───────────────────────
     const bufferXml = Buffer.from(xmlString, 'utf-8');
     const gzippedBuffer = await gzip(bufferXml);
     console.log(`📦 XML compactado: ${bufferXml.length} bytes → GZIP ${gzippedBuffer.length} bytes`);
 
-    // ── 2. Converter para Base64 ──────────────────────────
     const xmlBase64Gzip = gzippedBuffer.toString('base64');
 
-    // ── 3. Montar JSON (RecepcaoDocumentoRequest) ─────────
     const cnpj = process.env.ADN_CNPJ_CONCESSIONARIA || process.env.PRESTADOR_CNPJ;
     if (!cnpj) {
       throw new Error('CNPJ não configurado (ADN_CNPJ_CONCESSIONARIA ou PRESTADOR_CNPJ).');
@@ -241,10 +317,8 @@ export const emitirNotaNacional = async (xmlString: string): Promise<AdnEmission
       `📋 Payload — CNPJ: ${payload.cnpjConcessionaria} | ID: ${payload.identificador} | Base64: ${xmlBase64Gzip.length} chars`
     );
 
-    // ── 4. Configurar agente mTLS ─────────────────────────
     const httpsAgent = criarAgenteMTLS();
 
-    // ── 5. Enviar para o Ambiente Nacional (ADN/Serpro) ────
     const url =
       process.env.ADN_URL_EMISSAO ||
       (process.env.ADN_AMBIENTE === 'producao'
@@ -291,3 +365,14 @@ export const emitirNotaNacional = async (xmlString: string): Promise<AdnEmission
     };
   }
 };
+```
+
+### O que cada auditoria faz quando você redeployar:
+
+1. **🔍 AUDITORIA ARQUIVO**: mostra tamanho exato em bytes via `fs.statSync`, data de modificação, permissões e o primeiro byte (deve ser `0x30` para PFX válido).
+2. **🔑 AUDITORIA SENHA**: confirma se `SENHA_CERT_PFX` foi lida (sem expor o valor) e quantos caracteres tem.
+3. **❌ Erro de descriptografia**: captura a mensagem exata do node-forge nas duas tentativas (com senha e com senha vazia) e dá um diagnóstico claro.
+4. **🔗 CADEIA DETALHADA**: mostra Subject CN/O/OU, Issuer CN/O, validade e serial de cada cert — você verá se o cert é o correto e se a cadeia ICP-Brasil está presente.
+5. **🔐 AUDITORIA AGENTE HTTPS**: confirma `rejectUnauthorized=false` em homologação para isolar se o problema é cadeia de confiança.
+
+Apliquei as 5 auditorias profundas no `adnService.ts`. Cole no GitHub, redeploye no Railway e me mande os logs — com eles vamos identificar com precisão se o 495 vem de senha errada, PFX corrompido ou cadeia ICP-Brasil incompleta.
