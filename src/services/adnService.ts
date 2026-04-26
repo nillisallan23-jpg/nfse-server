@@ -22,80 +22,84 @@ interface PemMaterial {
   caPem?: string;
 }
 
+/**
+ * Converte um PFX (.pfx/.p12) em PEM (chave + certificado + CA chain)
+ * usando varredura PROFUNDA em todos os safeBags para capturar a cadeia ICP-Brasil.
+ */
 function pfxParaPem(pfxBuffer: Buffer, senha: string): PemMaterial {
-  const senhaLen = senha?.length ?? 0;
-  console.log(`🔑 AUDITORIA SENHA: Presente? ${senhaLen > 0 ? 'Sim' : 'NÃO'} | Caracteres: ${senhaLen}`);
-
   const pfxBinary = pfxBuffer.toString('binary');
-  let p12Asn1: forge.asn1.Asn1;
+  const p12Asn1 = forge.asn1.fromDer(pfxBinary);
+  const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, senha);
 
-  try {
-    p12Asn1 = forge.asn1.fromDer(pfxBinary);
-  } catch (errAsn1: any) {
-    console.error(`❌ FALHA ASN.1: arquivo corrompido ou formato inválido.`);
-    throw new Error(`PFX inválido: ${errAsn1.message}`);
-  }
+  const allCerts: forge.pki.Certificate[] = [];
+  let privateKey: forge.pki.PrivateKey | null = null;
 
-  let p12: forge.pkcs12.Pkcs12Pfx;
-  try {
-    p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, senha);
-    console.log('✅ PFX aberto com sucesso.');
-  } catch (e1: any) {
-    console.error(`⚠️ Erro na senha principal: ${e1.message}`);
-    try {
-      p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, '');
-      console.log('✅ PFX aberto com SENHA VAZIA.');
-    } catch (e2: any) {
-      throw new Error(`Senha incorreta ou arquivo corrompido: ${e1.message}`);
+  // ── Varredura MANUAL para não perder certificados da cadeia ──
+  for (const safeContents of p12.safeContents) {
+    for (const safeBag of safeContents.safeBags) {
+      // Extração da Chave Privada
+      if ((safeBag.type === forge.pki.oids.pkcs8ShroudedKeyBag || safeBag.type === forge.pki.oids.keyBag) && safeBag.key) {
+        privateKey = safeBag.key;
+      }
+      // Extração de TODOS os certificados (Cadeia completa)
+      if (safeBag.type === forge.pki.oids.certBag && safeBag.cert) {
+        allCerts.push(safeBag.cert);
+      }
     }
   }
 
-  const keyBags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag] ||
-                  p12.getBags({ bagType: forge.pki.oids.keyBag })[forge.pki.oids.keyBag];
+  if (!privateKey) throw new Error('Chave privada não encontrada no PFX.');
+  if (allCerts.length === 0) throw new Error('Nenhum certificado encontrado no PFX.');
 
-  if (!keyBags || !keyBags[0]?.key) throw new Error('Chave privada não encontrada.');
-  const keyPem = forge.pki.privateKeyToPem(keyBags[0].key);
+  const keyPem = forge.pki.privateKeyToPem(privateKey);
+  
+  // Identifica o certificado do cliente (o que não é auto-assinado)
+  let endEntityIdx = 0;
+  for (let i = 0; i < allCerts.length; i++) {
+    const c = allCerts[i];
+    if (c.subject.getField('CN')?.value !== c.issuer.getField('CN')?.value) {
+      endEntityIdx = i;
+      break;
+    }
+  }
 
-  const certBags = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] || [];
-  const allCerts = certBags.filter((b) => b.cert).map((b) => b.cert!);
+  const certPem = forge.pki.certificateToPem(allCerts[endEntityIdx]);
+  const chainCerts = allCerts.filter((_, idx) => idx !== endEntityIdx);
+  const caPem = chainCerts.map((c) => forge.pki.certificateToPem(c)).join('\n');
 
-  console.log(`🔗 CADEIA DE CERTIFICADOS: ${allCerts.length} encontrados.`);
-  allCerts.forEach((cert, idx) => {
-    console.log(`   [${idx}] CN: ${cert.subject.getField('CN')?.value} | Expira: ${cert.validity.notAfter}`);
-  });
-
-  const certPem = forge.pki.certificateToPem(allCerts[0]);
-  const caPem = allCerts.slice(1).map((c) => forge.pki.certificateToPem(c)).join('\n');
-
+  console.log(`🌿 AUDITORIA CADEIA: ${allCerts.length} certificados encontrados no PFX.`);
   return { keyPem, certPem, caPem: caPem || undefined };
 }
 
+/**
+ * Cria o agente HTTPS injetando a cadeia completa na propriedade 'ca'.
+ */
 function criarAgenteMTLS(): https.Agent {
   const pfxPath = process.env.CERT_PFX_PATH || './certs/certificado.pfx';
   const pfxPassword = process.env.SENHA_CERT_PFX || '';
-  let pfxBuffer: Buffer;
-
-  if (process.env.CERT_PFX_BASE64) {
-    pfxBuffer = Buffer.from(process.env.CERT_PFX_BASE64, 'base64');
-    console.log(`🔐 Usando CERT_PFX_BASE64 (${pfxBuffer.length} bytes)`);
-  } else {
-    console.log(`🔍 AUDITORIA ARQUIVO: Lendo de ${pfxPath}`);
-    if (!fs.existsSync(pfxPath)) throw new Error(`Arquivo não encontrado: ${pfxPath}`);
-    pfxBuffer = fs.readFileSync(pfxPath);
-  }
+  const pfxBuffer = process.env.CERT_PFX_BASE64 
+    ? Buffer.from(process.env.CERT_PFX_BASE64, 'base64') 
+    : fs.readFileSync(pfxPath);
 
   const { keyPem, certPem, caPem } = pfxParaPem(pfxBuffer, pfxPassword);
-  const caArray = caPem ? caPem.split(/(?=-----BEGIN CERTIFICATE-----)/g).map(s => s.trim()) : undefined;
+
+  // Montagem do caArray para o Node.js
+  const caArray: string[] = [];
+  if (caPem) {
+    const fromPfx = caPem.split(/(?=-----BEGIN CERTIFICATE-----)/g).map(s => s.trim()).filter(s => s.length > 0);
+    caArray.push(...fromPfx);
+  }
+  // Inclui o próprio certificado como âncora de confiança se necessário
+  if (certPem) caArray.push(certPem.trim());
+
+  console.log(`🔐 AGENTE HTTPS: ${caArray.length} certificados injetados na CA.`);
 
   const ambiente = process.env.ADN_AMBIENTE || 'homologacao';
-  const rejectUnauthorized = ambiente === 'producao';
-  console.log(`🔐 AGENTE HTTPS: Ambiente=${ambiente} | rejectUnauthorized=${rejectUnauthorized}`);
-
   return new https.Agent({
     key: keyPem,
     cert: certPem,
     ca: caArray,
-    rejectUnauthorized,
+    rejectUnauthorized: ambiente === 'producao', // Em homologação relaxa a validação
   });
 }
 
@@ -104,7 +108,7 @@ export const emitirNotaNacional = async (xmlString: string): Promise<AdnEmission
     const bufferXml = Buffer.from(xmlString, 'utf-8');
     const gzippedBuffer = await gzip(bufferXml);
     const xmlBase64Gzip = gzippedBuffer.toString('base64');
-
+    
     const cnpj = (process.env.ADN_CNPJ_CONCESSIONARIA || process.env.PRESTADOR_CNPJ || '').replace(/\D/g, '');
     const payload = {
       cnpjConcessionaria: cnpj,
@@ -121,19 +125,10 @@ export const emitirNotaNacional = async (xmlString: string): Promise<AdnEmission
       timeout: 60000,
     });
 
-    return {
-      sucesso: true,
-      mensagem: 'Sucesso',
-      protocolo: response.data?.protocolo,
-      respostaRaw: response.data,
-    };
+    return { sucesso: true, mensagem: 'Sucesso', protocolo: response.data?.protocolo, respostaRaw: response.data };
   } catch (error: any) {
     const body = error.response?.data;
-    console.error(`❌ Erro HTTP ${error.response?.status}:`, body || error.message);
-    return {
-      sucesso: false,
-      mensagem: body?.mensagem || error.message,
-      respostaRaw: body,
-    };
+    console.error(`❌ Erro ADN:`, body || error.message);
+    return { sucesso: false, mensagem: body?.mensagem || error.message, respostaRaw: body };
   }
 };
