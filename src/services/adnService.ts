@@ -104,20 +104,31 @@ function criarAgenteMTLS(): https.Agent {
 }
 
 export const emitirNotaNacional = async (xmlString: string): Promise<AdnEmissionResponse> => {
+  // --- LOG PARA CAPTURAR O XML BRUTO ---
+  console.log("--- INÍCIO DO XML PARA ANÁLISE ---");
+  console.log(xmlString); 
+  console.log("--- FIM DO XML PARA ANÁLISE ---");
+
   try {
     const bufferXml = Buffer.from(xmlString, 'utf-8');
     const gzippedBuffer = await gzip(bufferXml);
     const xmlBase64Gzip = gzippedBuffer.toString('base64');
     
     const cnpj = (process.env.ADN_CNPJ_CONCESSIONARIA || process.env.PRESTADOR_CNPJ || '').replace(/\D/g, '');
+    const idSolicitacao = `ENVIO_${Date.now()}`;
+    
     const payload = {
       cnpjConcessionaria: cnpj,
-      identificador: `ENVIO_${Date.now()}`,
+      identificador: idSolicitacao,
       notaFiscalViaXmlGZipBase64: xmlBase64Gzip,
     };
 
+    console.log(`📊 AUDITORIA ENVIO: CNPJ=${cnpj} | ID=${idSolicitacao} | XML_ORIGINAL=${xmlString.length} chars`);
+
     const httpsAgent = criarAgenteMTLS();
     const url = process.env.ADN_URL_EMISSAO || 'https://sefin.nfse.gov.br/sefinnacional/nfse';
+
+    console.log(`🌐 URL DE DESTINO: ${url}`);
 
     const response = await axios.post(url, payload, {
       httpsAgent,
@@ -125,10 +136,19 @@ export const emitirNotaNacional = async (xmlString: string): Promise<AdnEmission
       timeout: 60000,
     });
 
+    console.log("✅ RESPOSTA DA SEFIN RECEBIDA!");
+
     return { sucesso: true, mensagem: 'Sucesso', protocolo: response.data?.protocolo, respostaRaw: response.data };
   } catch (error: any) {
     const body = error.response?.data;
-    console.error(`❌ Erro ADN:`, body || error.message);
+    
+    // Log detalhado para identificar se o erro é SSL (Certificate) ou Validação (XML)
+    console.error(`❌ ERRO NA EMISSÃO:`, {
+      mensagem_erro: error.message,
+      status_http: error.response?.status,
+      detalhes_sefin: body
+    });
+
     return { sucesso: false, mensagem: body?.mensagem || error.message, respostaRaw: body };
   }
 };
