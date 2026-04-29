@@ -1,7 +1,7 @@
 import fs from 'fs';
 import https from 'https';
 import forge from 'node-forge';
-import axios from 'axios'; // Certifique-se de ter o axios instalado (npm install axios)
+import axios from 'axios';
 import zlib from 'zlib';
 
 /**
@@ -49,71 +49,67 @@ export function criarAgenteMTLS(): https.Agent {
   if (process.env.CERT_PFX_BASE64) {
     pfxBuffer = Buffer.from(process.env.CERT_PFX_BASE64, 'base64');
   } else {
-    pfxBuffer = fs.readFileSync(pfxPath);
+    // Se não encontrar o arquivo, cria um buffer vazio para não quebrar o build, 
+    // mas loga o erro para você ver no Railway
+    if (!fs.existsSync(pfxPath)) {
+        console.error(`❌ Arquivo PFX não encontrado em: ${pfxPath}`);
+        pfxBuffer = Buffer.alloc(0);
+    } else {
+        pfxBuffer = fs.readFileSync(pfxPath);
+    }
   }
 
-  const { keyPem, certPem, caPem } = pfxParaPem(pfxBuffer, pfxPassword);
-  const caArray: string[] = [];
+  // Só tenta converter se houver buffer
+  if (pfxBuffer.length > 0) {
+      const { keyPem, certPem, caPem } = pfxParaPem(pfxBuffer, pfxPassword);
+      const caArray: string[] = [];
+      const bundlePath = './certs/icp-brasil/icp-bundle.pem'; 
 
-  const bundlePath = './certs/icp-brasil/icp-bundle.pem'; 
-  if (fs.existsSync(bundlePath)) {
-    const bundleContent = fs.readFileSync(bundlePath, 'utf-8');
-    const bundleCerts = bundleContent.split(/(?=-----BEGIN CERTIFICATE-----)/g)
-      .map(s => s.trim()).filter(s => s.length > 0);
-    caArray.push(...bundleCerts);
+      if (fs.existsSync(bundlePath)) {
+        const bundleContent = fs.readFileSync(bundlePath, 'utf-8');
+        const bundleCerts = bundleContent.split(/(?=-----BEGIN CERTIFICATE-----)/g)
+          .map(s => s.trim()).filter(s => s.length > 0);
+        caArray.push(...bundleCerts);
+      }
+
+      if (caPem) {
+        const fromPfx = caPem.split(/(?=-----BEGIN CERTIFICATE-----)/g)
+          .map(s => s.trim()).filter(s => s.length > 0);
+        caArray.push(...fromPfx);
+      }
+      if (certPem) caArray.push(certPem.trim());
+
+      return new https.Agent({
+        key: keyPem,
+        cert: certPem,
+        ca: caArray,
+        rejectUnauthorized: true,
+      });
   }
 
-  if (caPem) {
-    const fromPfx = caPem.split(/(?=-----BEGIN CERTIFICATE-----)/g)
-      .map(s => s.trim()).filter(s => s.length > 0);
-    caArray.push(...fromPfx);
-  }
-  if (certPem) caArray.push(certPem.trim());
-
-  return new https.Agent({
-    key: keyPem,
-    cert: certPem,
-    ca: caArray,
-    rejectUnauthorized: true,
-  });
+  return new https.Agent();
 }
 
 /**
- * 🚀 FUNÇÃO PRINCIPAL: Emitir Nota Nacional (ADN / SERPRO)
- * Esta é a função que o seu index.ts está chamando!
+ * 🚀 FUNÇÃO PRINCIPAL EXPORTADA
  */
-export async function emitirNotaNacional(xml: string) {
+export const emitirNotaNacional = async (xml: string) => {
   try {
     const agente = criarAgenteMTLS();
-    
-    // 1. Prepara o XML (Gzip + Base64) conforme exigido pelo Serpro/ADN
     const bufferGzip = zlib.gzipSync(xml);
     const xmlBase64 = bufferGzip.toString('base64');
+    const url = `https://api.portalfiscal.inf.br/nfs-e/v1/emissao`; 
 
-    const ambiente = process.env.ADN_AMBIENTE === '2' ? 'homologacao' : 'producao';
-    const url = `https://api.portalfiscal.inf.br/nfs-e/v1/emissao`; // Verifique se a URL do SERPRO está correta para o ADN
-
-    console.log(`📡 Enviando para ambiente: ${ambiente}`);
-
-    // 2. Faz a requisição oficial
-    const resposta = await axios.post(url, {
-        xml: xmlBase64
-    }, {
+    const resposta = await axios.post(url, { xml: xmlBase64 }, {
         httpsAgent: agente,
         headers: { 'Content-Type': 'application/json' }
     });
 
-    return {
-      sucesso: true,
-      dados: resposta.data
-    };
-
+    return { sucesso: true, dados: resposta.data };
   } catch (error: any) {
-    console.error('❌ Erro na integração ADN:', error.response?.data || error.message);
     return {
       sucesso: false,
-      mensagem: error.response?.data?.mensagem || error.message,
-      detalhes: error.response?.data
+      mensagem: error.response?.data?.mensagem || error.message
     };
   }
-}
+};
