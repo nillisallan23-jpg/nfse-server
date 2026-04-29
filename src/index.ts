@@ -1,119 +1,175 @@
-import fs from 'fs';
-import https from 'https';
-import forge from 'node-forge';
-import axios from 'axios'; // Certifique-se de ter o axios instalado (npm install axios)
-import zlib from 'zlib';
+import dotenv from 'dotenv';
+
+import express, { Request, Response } from 'express';
+
+import { emitirNotaNacional } from './services/adnService';
+
+
+
+// Carrega as variáveis do arquivo .env (local) ou do Railway
+
+dotenv.config();
+
+
+
+const app = express();
+
+
+
+// Aumentamos o limite para 10mb para garantir que XMLs grandes não sejam bloqueados
+
+app.use(express.json({ limit: '10mb' }));
+
+
 
 /**
- * Converte o PFX para PEM
+
+ * 🩺 ROTA DE SAÚDE (HEALTH CHECK)
+
+ * Serve para verificar se o servidor está online e configurado.
+
+ * Acesse: https://pix-check-instant-view-production.up.railway.app/health
+
  */
-export function pfxParaPem(pfxBuffer: Buffer, password: string) {
-  const pfxAsn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
-  const pfx = forge.pkcs12.pkcs12FromAsn1(pfxAsn1, password);
 
-  let keyPem = '';
-  let certPem = '';
-  let caPem = '';
+app.get('/health', (req: Request, res: Response) => {
 
-  const keyBags = pfx.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
-  const keyBag = keyBags[forge.pki.oids.pkcs8ShroudedKeyBag];
-  if (keyBag && keyBag[0]) {
-    keyPem = forge.pki.privateKeyToPem(keyBag[0].key!);
-  }
+  res.json({
 
-  const certBags = pfx.getBags({ bagType: forge.pki.oids.certBag });
-  const certBag = certBags[forge.pki.oids.certBag];
-  if (certBag) {
-    certBag.forEach((bag: any) => {
-      const pem = forge.pki.certificateToPem(bag.cert);
-      if (bag.attributes && bag.attributes.friendlyName) {
-        certPem = pem;
-      } else {
-        caPem += pem;
-      }
-    });
-    if (!certPem && certBag[0]) certPem = forge.pki.certificateToPem(certBag[0].cert);
-  }
+    status: 'ok',
 
-  return { keyPem, certPem, caPem };
-}
+    modelo: 'ADN Nacional (Serpro)',
 
-/**
- * Cria o Agente HTTPS com mTLS e Bundle ICP-Brasil
- */
-export function criarAgenteMTLS(): https.Agent {
-  const pfxPath = process.env.CERT_PFX_PATH || './certs/certificado.pfx';
-  const pfxPassword = process.env.SENHA_CERT_PFX || '';
-  
-  let pfxBuffer: Buffer;
-  if (process.env.CERT_PFX_BASE64) {
-    pfxBuffer = Buffer.from(process.env.CERT_PFX_BASE64, 'base64');
-  } else {
-    pfxBuffer = fs.readFileSync(pfxPath);
-  }
+    ambiente: process.env.ADN_AMBIENTE === '2' ? 'Homologação/Restrita' : 'Produção',
 
-  const { keyPem, certPem, caPem } = pfxParaPem(pfxBuffer, pfxPassword);
-  const caArray: string[] = [];
+    servico: 'pix-check-instant-view',
 
-  const bundlePath = './certs/icp-brasil/icp-bundle.pem'; 
-  if (fs.existsSync(bundlePath)) {
-    const bundleContent = fs.readFileSync(bundlePath, 'utf-8');
-    const bundleCerts = bundleContent.split(/(?=-----BEGIN CERTIFICATE-----)/g)
-      .map(s => s.trim()).filter(s => s.length > 0);
-    caArray.push(...bundleCerts);
-  }
+    timestamp: new Date().toISOString()
 
-  if (caPem) {
-    const fromPfx = caPem.split(/(?=-----BEGIN CERTIFICATE-----)/g)
-      .map(s => s.trim()).filter(s => s.length > 0);
-    caArray.push(...fromPfx);
-  }
-  if (certPem) caArray.push(certPem.trim());
-
-  return new https.Agent({
-    key: keyPem,
-    cert: certPem,
-    ca: caArray,
-    rejectUnauthorized: true,
   });
-}
+
+});
+
+
 
 /**
- * 🚀 FUNÇÃO PRINCIPAL: Emitir Nota Nacional (ADN / SERPRO)
- * Esta é a função que o seu index.ts está chamando!
+
+ * 🏠 ROTA RAIZ
+
  */
-export async function emitirNotaNacional(xml: string) {
+
+app.get('/', (req: Request, res: Response) => {
+
+  res.send('🚀 Servidor de Emissão NFS-e Nacional ADN está operando!');
+
+});
+
+
+
+/**
+
+ * 📄 POST /nfse/emitir
+
+ * Recebe o XML do MeConferi e repassa para o adnService processar (Gzip + Base64).
+
+ */
+
+app.post('/nfse/emitir', async (req: Request, res: Response) => {
+
   try {
-    const agente = criarAgenteMTLS();
-    
-    // 1. Prepara o XML (Gzip + Base64) conforme exigido pelo Serpro/ADN
-    const bufferGzip = zlib.gzipSync(xml);
-    const xmlBase64 = bufferGzip.toString('base64');
 
-    const ambiente = process.env.ADN_AMBIENTE === '2' ? 'homologacao' : 'producao';
-    const url = `https://api.portalfiscal.inf.br/nfs-e/v1/emissao`; // Verifique se a URL do SERPRO está correta para o ADN
+    const { xml } = req.body;
 
-    console.log(`📡 Enviando para ambiente: ${ambiente}`);
 
-    // 2. Faz a requisição oficial
-    const resposta = await axios.post(url, {
-        xml: xmlBase64
-    }, {
-        httpsAgent: agente,
-        headers: { 'Content-Type': 'application/json' }
-    });
 
-    return {
-      sucesso: true,
-      dados: resposta.data
-    };
+    // Validação básica do campo obrigatório
+
+    if (!xml || typeof xml !== 'string') {
+
+      return res.status(400).json({
+
+        sucesso: false,
+
+        mensagem: 'O campo "xml" é obrigatório e deve ser uma string.'
+
+      });
+
+    }
+
+
+
+    console.log(`\n━━━ INÍCIO DO PROCESSAMENTO: ${new Date().toISOString()} ━━━`);
+
+    console.log(`Tamanho do XML original: ${xml.length} caracteres.`);
+
+
+
+    // Chama a função profissional de integração com o Serpro
+
+    const resultado = await emitirNotaNacional(xml);
+
+
+
+    if (resultado.sucesso) {
+
+      console.log('✅ Emissão concluída com sucesso.');
+
+      return res.status(200).json(resultado);
+
+    } else {
+
+      console.error('⚠️ Falha na emissão pela API Nacional.');
+
+      return res.status(422).json(resultado);
+
+    }
+
+
 
   } catch (error: any) {
-    console.error('❌ Erro na integração ADN:', error.response?.data || error.message);
-    return {
+
+    console.error('❌ Erro inesperado no servidor:', error.message);
+
+    return res.status(500).json({
+
       sucesso: false,
-      mensagem: error.response?.data?.mensagem || error.message,
-      detalhes: error.response?.data
-    };
+
+      mensagem: 'Erro interno ao processar a nota fiscal.',
+
+      erro: error.message
+
+    });
+
   }
-}
+
+});
+
+
+
+/**
+
+ * 🚀 CONFIGURAÇÃO DA PORTA
+
+ * O Railway injeta a porta correta na variável process.env.PORT.
+
+ * Se não existir (local), usa a 8080.
+
+ */
+
+const PORT = process.env.PORT || 8080;
+
+
+
+app.listen(PORT, () => {
+
+  console.log(`\n==============================================`);
+
+  console.log(`🚀 SERVIDOR RODANDO NA PORTA: ${PORT}`);
+
+  console.log(`🩺 HEALTH CHECK: http://localhost:${PORT}/health`);
+
+  console.log(`📄 EMISSÃO: http://localhost:${PORT}/nfse/emitir`);
+
+  console.log(`==============================================\n`);
+
+});
