@@ -5,7 +5,7 @@ import axios from 'axios';
 import zlib from 'zlib';
 
 /**
- * Converte o PFX para PEM com extração robusta (mTLS Fix)
+ * Converte o PFX para PEM com extração vinculada (Fix para 'key values mismatch')
  */
 export function pfxParaPem(pfxBuffer: Buffer, password: string) {
   const pfxAsn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
@@ -44,42 +44,30 @@ export function pfxParaPem(pfxBuffer: Buffer, password: string) {
 }
 
 /**
- * Cria o Agente HTTPS com mTLS
+ * Cria o Agente HTTPS com mTLS e suporte a cadeias de certificação
  */
 export function criarAgenteMTLS(): https.Agent {
-  const pfxPath = process.env.CERT_PFX_PATH || './certs/certificado.pfx';
   const pfxPassword = process.env.SENHA_CERT_PFX || '';
-  
-  let pfxBuffer: Buffer;
-  
+  let pfxBuffer: Buffer = Buffer.alloc(0);
+
   if (process.env.CERT_PFX_BASE64) {
     pfxBuffer = Buffer.from(process.env.CERT_PFX_BASE64, 'base64');
-  } else {
-    if (!fs.existsSync(pfxPath)) {
-      console.error(`❌ PFX não encontrado.`);
-      return new https.Agent();
-    }
-    pfxBuffer = fs.readFileSync(pfxPath);
+  } else if (process.env.CERT_PFX_PATH && fs.existsSync(process.env.CERT_PFX_PATH)) {
+    pfxBuffer = fs.readFileSync(process.env.CERT_PFX_PATH);
   }
 
   if (pfxBuffer.length > 0) {
     const { keyPem, certPem, caPem } = pfxParaPem(pfxBuffer, pfxPassword);
     const caArray: string[] = [];
 
+    // Adiciona o Bundle ICP-Brasil se existir
     const bundlePath = './certs/icp-brasil/icp-bundle.pem';
     if (fs.existsSync(bundlePath)) {
       const bundleContent = fs.readFileSync(bundlePath, 'utf-8');
-      const bundleCerts = bundleContent.split(/(?=-----BEGIN CERTIFICATE-----)/g)
-        .map(s => s.trim()).filter(s => s.length > 0);
-      caArray.push(...bundleCerts);
+      caArray.push(...bundleContent.split(/(?=-----BEGIN CERTIFICATE-----)/g).filter(s => s.trim()));
     }
 
-    if (caPem) {
-      const fromPfx = caPem.split(/(?=-----BEGIN CERTIFICATE-----)/g)
-        .map(s => s.trim()).filter(s => s.length > 0);
-      caArray.push(...fromPfx);
-    }
-
+    if (caPem) caArray.push(...caPem.split(/(?=-----BEGIN CERTIFICATE-----)/g).filter(s => s.trim()));
     if (certPem) caArray.push(certPem.trim());
 
     return new https.Agent({
@@ -94,43 +82,32 @@ export function criarAgenteMTLS(): https.Agent {
 }
 
 /**
- * 🚀 FUNÇÃO PRINCIPAL: Emissão Nacional
+ * 🚀 FUNÇÃO PRINCIPAL: Emissão Produção Restrita (SERPRO)
  */
 export const emitirNotaNacional = async (xml: string) => {
   try {
     const agente = criarAgenteMTLS();
-    
-    // Compressão Gzip -> Base64
     const bufferGzip = zlib.gzipSync(xml);
     const xmlBase64 = bufferGzip.toString('base64');
     
-    /**
-     * AJUSTE DE URL:
-     * O erro ENOTFOUND indica que o domínio api.portalfiscal.inf.br pode estar inacessível
-     * Verifique se para o ADN/SERPRO a URL não é: sefin.nfse.gov.br ou similar.
-     */
-    const url = `https://api.portalfiscal.inf.br/nfs-e/v1/emissao`;
+    // Utilizando a URL de Produção Restrita das suas variáveis de ambiente
+    const url = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
 
-    console.log(`📡 Tentando conexão com: ${url}`);
+    console.log(`📡 Enviando para Produção: ${url}`);
 
     const resposta = await axios.post(url, { xml: xmlBase64 }, {
       httpsAgent: agente,
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 15000 // 15 segundos
+      headers: { 
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      timeout: 30000 
     });
 
     return { sucesso: true, dados: resposta.data };
 
   } catch (error: any) {
-    // Tratamento para erro de DNS/Conexão
-    if (error.code === 'ENOTFOUND') {
-      return {
-        sucesso: false,
-        mensagem: "Erro de DNS: Não foi possível encontrar o servidor da API Nacional. Verifique a URL ou a conexão do Railway.",
-        detalhes: error.hostname
-      };
-    }
-
+    console.error('❌ Erro na Emissão:', error.response?.data || error.message);
     return {
       sucesso: false,
       mensagem: error.response?.data?.mensagem || error.message,
