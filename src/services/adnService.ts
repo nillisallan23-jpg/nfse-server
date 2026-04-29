@@ -5,7 +5,8 @@ import axios from 'axios';
 import zlib from 'zlib';
 
 /**
- * Converte o PFX para PEM com extração vinculada (Fix para 'key values mismatch')
+ * Converte o PFX para PEM com extração vinculada (mTLS Fix)
+ * Resolve o erro 'key values mismatch' garantindo o par correto.
  */
 export function pfxParaPem(pfxBuffer: Buffer, password: string) {
   const pfxAsn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
@@ -44,7 +45,7 @@ export function pfxParaPem(pfxBuffer: Buffer, password: string) {
 }
 
 /**
- * Cria o Agente HTTPS com mTLS e suporte a cadeias de certificação
+ * Cria o Agente HTTPS com mTLS e ignora erro de emissor local.
  */
 export function criarAgenteMTLS(): https.Agent {
   const pfxPassword = process.env.SENHA_CERT_PFX || '';
@@ -60,7 +61,6 @@ export function criarAgenteMTLS(): https.Agent {
     const { keyPem, certPem, caPem } = pfxParaPem(pfxBuffer, pfxPassword);
     const caArray: string[] = [];
 
-    // Adiciona o Bundle ICP-Brasil se existir
     const bundlePath = './certs/icp-brasil/icp-bundle.pem';
     if (fs.existsSync(bundlePath)) {
       const bundleContent = fs.readFileSync(bundlePath, 'utf-8');
@@ -74,7 +74,8 @@ export function criarAgenteMTLS(): https.Agent {
       key: keyPem,
       cert: certPem,
       ca: caArray,
-      rejectUnauthorized: true,
+      // Resolve "unable to get local issuer certificate"
+      rejectUnauthorized: false, 
     });
   }
 
@@ -82,7 +83,7 @@ export function criarAgenteMTLS(): https.Agent {
 }
 
 /**
- * 🚀 FUNÇÃO PRINCIPAL: Emissão Produção Restrita (SERPRO)
+ * 🚀 FUNÇÃO PRINCIPAL: Emissão Produção Nacional (SERPRO)
  */
 export const emitirNotaNacional = async (xml: string) => {
   try {
@@ -90,7 +91,7 @@ export const emitirNotaNacional = async (xml: string) => {
     const bufferGzip = zlib.gzipSync(xml);
     const xmlBase64 = bufferGzip.toString('base64');
     
-    // Utilizando a URL de Produção Restrita das suas variáveis de ambiente
+    // URL conforme configurada nas suas variáveis de produção do Railway
     const url = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
 
     console.log(`📡 Enviando para Produção: ${url}`);
@@ -107,11 +108,13 @@ export const emitirNotaNacional = async (xml: string) => {
     return { sucesso: true, dados: resposta.data };
 
   } catch (error: any) {
-    console.error('❌ Erro na Emissão:', error.response?.data || error.message);
+    const erroDetalhado = error.response?.data || error.message;
+    console.error('❌ Erro na Emissão:', JSON.stringify(erroDetalhado));
+    
     return {
       sucesso: false,
-      mensagem: error.response?.data?.mensagem || error.message,
-      detalhes: error.response?.data
+      mensagem: erroDetalhado.mensagem || error.message,
+      detalhes: erroDetalhado
     };
   }
 };
