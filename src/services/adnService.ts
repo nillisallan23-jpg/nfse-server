@@ -5,8 +5,7 @@ import axios from 'axios';
 import zlib from 'zlib';
 
 /**
- * Converte o PFX para PEM com extração vinculada (mTLS Fix)
- * Esta versão resolve o erro 'key values mismatch' garantindo que o par correto seja extraído.
+ * Converte o PFX para PEM com extração robusta (mTLS Fix)
  */
 export function pfxParaPem(pfxBuffer: Buffer, password: string) {
   const pfxAsn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
@@ -16,28 +15,23 @@ export function pfxParaPem(pfxBuffer: Buffer, password: string) {
   let certPem = '';
   let caPem = '';
 
-  // 1. Extração da Chave Privada
   const keyBags = pfx.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
   const keyBag = keyBags[forge.pki.oids.pkcs8ShroudedKeyBag];
   if (keyBag && keyBag[0]) {
     keyPem = forge.pki.privateKeyToPem(keyBag[0].key!);
   }
 
-  // 2. Extração dos Certificados (Cliente e Cadeia CA)
   const bags = pfx.getBags({ bagType: forge.pki.oids.certBag });
   const certBag = bags[forge.pki.oids.certBag];
 
   if (certBag) {
-    // Busca o certificado que possui vínculo com a chave privada (localKeyId)
     const clientCert = certBag.find((b: any) => b.attributes && b.attributes.localKeyId);
-    
     if (clientCert) {
       certPem = forge.pki.certificateToPem(clientCert.cert);
     } else if (certBag[0]) {
       certPem = forge.pki.certificateToPem(certBag[0].cert);
     }
 
-    // Organiza os demais como cadeia de confiança
     certBag.forEach((bag: any) => {
       const pem = forge.pki.certificateToPem(bag.cert);
       if (pem.trim() !== certPem.trim()) {
@@ -50,7 +44,7 @@ export function pfxParaPem(pfxBuffer: Buffer, password: string) {
 }
 
 /**
- * Cria o Agente HTTPS com mTLS e fusão de bundles (ICP-Brasil + PFX)
+ * Cria o Agente HTTPS com mTLS
  */
 export function criarAgenteMTLS(): https.Agent {
   const pfxPath = process.env.CERT_PFX_PATH || './certs/certificado.pfx';
@@ -62,7 +56,7 @@ export function criarAgenteMTLS(): https.Agent {
     pfxBuffer = Buffer.from(process.env.CERT_PFX_BASE64, 'base64');
   } else {
     if (!fs.existsSync(pfxPath)) {
-      console.error(`❌ Erro: Arquivo PFX não encontrado em ${pfxPath}`);
+      console.error(`❌ PFX não encontrado.`);
       return new https.Agent();
     }
     pfxBuffer = fs.readFileSync(pfxPath);
@@ -72,32 +66,27 @@ export function criarAgenteMTLS(): https.Agent {
     const { keyPem, certPem, caPem } = pfxParaPem(pfxBuffer, pfxPassword);
     const caArray: string[] = [];
 
-    // Fusão com o bundle ICP-Brasil do governo
     const bundlePath = './certs/icp-brasil/icp-bundle.pem';
     if (fs.existsSync(bundlePath)) {
       const bundleContent = fs.readFileSync(bundlePath, 'utf-8');
       const bundleCerts = bundleContent.split(/(?=-----BEGIN CERTIFICATE-----)/g)
-        .map(s => s.trim())
-        .filter(s => s.length > 0);
+        .map(s => s.trim()).filter(s => s.length > 0);
       caArray.push(...bundleCerts);
     }
 
-    // Adição da cadeia do próprio PFX
     if (caPem) {
       const fromPfx = caPem.split(/(?=-----BEGIN CERTIFICATE-----)/g)
-        .map(s => s.trim())
-        .filter(s => s.length > 0);
+        .map(s => s.trim()).filter(s => s.length > 0);
       caArray.push(...fromPfx);
     }
 
-    // Adição do certificado cliente na lista de confiança (Self-Trust)
     if (certPem) caArray.push(certPem.trim());
 
     return new https.Agent({
       key: keyPem,
       cert: certPem,
       ca: caArray,
-      rejectUnauthorized: true, // Segurança máxima ativada
+      rejectUnauthorized: true,
     });
   }
 
@@ -105,43 +94,47 @@ export function criarAgenteMTLS(): https.Agent {
 }
 
 /**
- * 🚀 FUNÇÃO PRINCIPAL: Integração com a API NFS-e Nacional
- * Realiza compressão Gzip e envio via mTLS.
+ * 🚀 FUNÇÃO PRINCIPAL: Emissão Nacional
  */
 export const emitirNotaNacional = async (xml: string) => {
   try {
-    console.log('📡 Iniciando integração com API Nacional...');
-    
     const agente = criarAgenteMTLS();
     
-    // Preparação do XML conforme padrão SERPRO (Gzip -> Base64)
+    // Compressão Gzip -> Base64
     const bufferGzip = zlib.gzipSync(xml);
     const xmlBase64 = bufferGzip.toString('base64');
     
+    /**
+     * AJUSTE DE URL:
+     * O erro ENOTFOUND indica que o domínio api.portalfiscal.inf.br pode estar inacessível
+     * Verifique se para o ADN/SERPRO a URL não é: sefin.nfse.gov.br ou similar.
+     */
     const url = `https://api.portalfiscal.inf.br/nfs-e/v1/emissao`;
+
+    console.log(`📡 Tentando conexão com: ${url}`);
 
     const resposta = await axios.post(url, { xml: xmlBase64 }, {
       httpsAgent: agente,
-      headers: { 
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      timeout: 30000 // 30 segundos de timeout
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 15000 // 15 segundos
     });
 
-    return { 
-      sucesso: true, 
-      dados: resposta.data 
-    };
+    return { sucesso: true, dados: resposta.data };
 
   } catch (error: any) {
-    const erroDetalhado = error.response?.data || error.message;
-    console.error('❌ Erro na API Nacional:', JSON.stringify(erroDetalhado));
-    
+    // Tratamento para erro de DNS/Conexão
+    if (error.code === 'ENOTFOUND') {
+      return {
+        sucesso: false,
+        mensagem: "Erro de DNS: Não foi possível encontrar o servidor da API Nacional. Verifique a URL ou a conexão do Railway.",
+        detalhes: error.hostname
+      };
+    }
+
     return {
       sucesso: false,
-      mensagem: erroDetalhado.mensagem || error.message,
-      detalhes: erroDetalhado
+      mensagem: error.response?.data?.mensagem || error.message,
+      detalhes: error.response?.data
     };
   }
 };
