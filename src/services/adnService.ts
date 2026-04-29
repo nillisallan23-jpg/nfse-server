@@ -85,18 +85,33 @@ export function criarAgenteMTLS(): https.Agent {
 /**
  * 🚀 FUNÇÃO PRINCIPAL: Emissão Produção Nacional (SERPRO)
  */
+/**
+ * 🚀 FUNÇÃO PRINCIPAL: Emissão Produção Nacional (Ajustada com campos obrigatórios)
+ */
 export const emitirNotaNacional = async (xml: string) => {
   try {
     const agente = criarAgenteMTLS();
+    
+    // Compressão Gzip -> Base64
     const bufferGzip = zlib.gzipSync(xml);
     const xmlBase64 = bufferGzip.toString('base64');
     
-    // URL conforme configurada nas suas variáveis de produção do Railway
+    // Pegando os valores das suas variáveis de ambiente do Railway
+    const identificador = process.env.IDENTIFICADOR_ENVIO || "ID_PADRAO";
+    const cnpjConcessionaria = process.env.ADN_CNPJ_CONCESSIONARIA || "";
+
     const url = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
 
     console.log(`📡 Enviando para Produção: ${url}`);
 
-    const resposta = await axios.post(url, { xml: xmlBase64 }, {
+    // O objeto enviado deve conter os campos que o erro apontou como ausentes
+    const payload = {
+      Identificador: identificador,
+      CnpjConcessionaria: cnpjConcessionaria,
+      XmlGzipBase64: xmlBase64 
+    };
+
+    const resposta = await axios.post(url, payload, {
       httpsAgent: agente,
       headers: { 
         'Content-Type': 'application/json',
@@ -108,13 +123,13 @@ export const emitirNotaNacional = async (xml: string) => {
     return { sucesso: true, dados: resposta.data };
 
   } catch (error: any) {
-    const erroDetalhado = error.response?.data || error.message;
-    console.error('❌ Erro na Emissão:', JSON.stringify(erroDetalhado));
-    
+    const erroGoverno = error.response?.data;
+    console.error('❌ Erro de Validação na API:', JSON.stringify(erroGoverno || error.message));
+
     return {
       sucesso: false,
-      mensagem: erroDetalhado.mensagem || error.message,
-      detalhes: erroDetalhado
+      mensagem: "Erro de validação nos campos da API Nacional.",
+      detalhes: erroGoverno
     };
   }
 };
