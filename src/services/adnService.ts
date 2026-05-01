@@ -83,32 +83,34 @@ export function criarAgenteMTLS(): https.Agent {
 }
 
 /**
- * 🚀 FUNÇÃO PRINCIPAL: Emissão Produção Nacional (SERPRO)
- */
-/**
- * 🚀 FUNÇÃO PRINCIPAL: Emissão Produção Nacional (Ajustada com campos obrigatórios)
+ * 🚀 FUNÇÃO PRINCIPAL: Emissão Produção Nacional (Ajustada para erro 210)
  */
 export const emitirNotaNacional = async (xml: string) => {
   try {
     const agente = criarAgenteMTLS();
     
-    // Compressão Gzip -> Base64
+    // 1. Verificação de segurança: garantir que o XML não chegou vazio
+    if (!xml || xml.length < 10) {
+      throw new Error("O XML fornecido é inválido ou está vazio.");
+    }
+
+    // 2. Compressão Gzip -> Base64
     const bufferGzip = zlib.gzipSync(xml);
     const xmlBase64 = bufferGzip.toString('base64');
     
-    // Pegando os valores das suas variáveis de ambiente do Railway
-    const identificador = process.env.IDENTIFICADOR_ENVIO || "ID_PADRAO";
+    const identificador = process.env.IDENTIFICADOR_ENVIO || "ID_PROD";
     const cnpjConcessionaria = process.env.ADN_CNPJ_CONCESSIONARIA || "";
-
     const url = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
 
-    console.log(`📡 Enviando para Produção: ${url}`);
+    console.log(`📡 Enviando para: ${url}`);
 
-    // O objeto enviado deve conter os campos que o erro apontou como ausentes
+    // 3. Payload ajustado: Usando 'Conteudo' e 'XmlGzipBase64' para garantir compatibilidade
+    // O erro 210 acontece porque o governo não "viu" o conteúdo no campo anterior.
     const payload = {
       Identificador: identificador,
       CnpjConcessionaria: cnpjConcessionaria,
-      XmlGzipBase64: xmlBase64 
+      Conteudo: xmlBase64, // Campo principal esperado pelo SERPRO para o binário
+      XmlGzipBase64: xmlBase64 // Campo de backup
     };
 
     const resposta = await axios.post(url, payload, {
@@ -120,16 +122,37 @@ export const emitirNotaNacional = async (xml: string) => {
       timeout: 30000 
     });
 
+    console.log("✅ Resposta do Governo recebida!");
     return { sucesso: true, dados: resposta.data };
 
   } catch (error: any) {
     const erroGoverno = error.response?.data;
-    console.error('❌ Erro de Validação na API:', JSON.stringify(erroGoverno || error.message));
+    console.error('❌ Erro na Emissão:', JSON.stringify(erroGoverno || error.message));
 
     return {
       sucesso: false,
-      mensagem: "Erro de validação nos campos da API Nacional.",
+      mensagem: "Erro de processamento na API Nacional.",
       detalhes: erroGoverno
     };
+  }
+};
+
+/**
+ * 🔍 FUNÇÃO DE CONSULTA: Para conferir o protocolo guardado
+ */
+export const consultarProtocolo = async (protocolo: string) => {
+  try {
+    const agente = criarAgenteMTLS();
+    const url = `https://certificado.api.via.nfse.gov.br/recepcao/consultar/nfsev/${protocolo}`;
+
+    const resposta = await axios.get(url, {
+      httpsAgent: agente,
+      headers: { 'Accept': 'application/json' },
+      timeout: 15000 
+    });
+
+    return { sucesso: true, dados: resposta.data };
+  } catch (error: any) {
+    return { sucesso: false, detalhes: error.response?.data || error.message };
   }
 };
