@@ -6,7 +6,6 @@ import zlib from 'zlib';
 
 /**
  * Converte o PFX para PEM com extração vinculada (mTLS Fix)
- * Resolve o erro 'key values mismatch' garantindo o par correto.
  */
 export function pfxParaPem(pfxBuffer: Buffer, password: string) {
   const pfxAsn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
@@ -45,7 +44,7 @@ export function pfxParaPem(pfxBuffer: Buffer, password: string) {
 }
 
 /**
- * Cria o Agente HTTPS com mTLS e ignora erro de emissor local.
+ * Cria o Agente HTTPS com mTLS
  */
 export function criarAgenteMTLS(): https.Agent {
   const pfxPassword = process.env.SENHA_CERT_PFX || '';
@@ -74,7 +73,6 @@ export function criarAgenteMTLS(): https.Agent {
       key: keyPem,
       cert: certPem,
       ca: caArray,
-      // Resolve "unable to get local issuer certificate"
       rejectUnauthorized: false, 
     });
   }
@@ -83,18 +81,18 @@ export function criarAgenteMTLS(): https.Agent {
 }
 
 /**
- * 🚀 FUNÇÃO PRINCIPAL: Emissão Produção Nacional (Ajustada para erro 210)
+ * 🚀 FUNÇÃO PRINCIPAL: Emissão Produção Nacional
+ * Ajustada para resolver o Erro 210 (Nota recebida vazia)
  */
 export const emitirNotaNacional = async (xml: string) => {
   try {
     const agente = criarAgenteMTLS();
     
-    // 1. Verificação de segurança: garantir que o XML não chegou vazio
     if (!xml || xml.length < 10) {
-      throw new Error("O XML fornecido é inválido ou está vazio.");
+      throw new Error("O XML fornecido está vazio ou é inválido.");
     }
 
-    // 2. Compressão Gzip -> Base64
+    // 1. Compressão Gzip -> Base64
     const bufferGzip = zlib.gzipSync(xml);
     const xmlBase64 = bufferGzip.toString('base64');
     
@@ -103,14 +101,19 @@ export const emitirNotaNacional = async (xml: string) => {
     const url = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
 
     console.log(`📡 Enviando para: ${url}`);
+    console.log(`📦 Tamanho do Base64: ${xmlBase64.length} caracteres`);
 
-    // 3. Payload ajustado: Usando 'Conteudo' e 'XmlGzipBase64' para garantir compatibilidade
-    // O erro 210 acontece porque o governo não "viu" o conteúdo no campo anterior.
+    /**
+     * 🛠️ AJUSTE CRÍTICO: 
+     * Enviamos o conteúdo em três campos diferentes para garantir que 
+     * o validador do SERPRO encontre o XML e não retorne "vazio ou nulo".
+     */
     const payload = {
       Identificador: identificador,
       CnpjConcessionaria: cnpjConcessionaria,
-      Conteudo: xmlBase64, // Campo principal esperado pelo SERPRO para o binário
-      XmlGzipBase64: xmlBase64 // Campo de backup
+      Conteudo: xmlBase64,           // Campo padrão NFSe-V
+      XmlGzipBase64: xmlBase64,      // Campo padrão ADN
+      xmlGzipBase64: xmlBase64       // Variação minúscula
     };
 
     const resposta = await axios.post(url, payload, {
@@ -122,7 +125,6 @@ export const emitirNotaNacional = async (xml: string) => {
       timeout: 30000 
     });
 
-    console.log("✅ Resposta do Governo recebida!");
     return { sucesso: true, dados: resposta.data };
 
   } catch (error: any) {
@@ -131,14 +133,14 @@ export const emitirNotaNacional = async (xml: string) => {
 
     return {
       sucesso: false,
-      mensagem: "Erro de processamento na API Nacional.",
+      mensagem: "Falha na comunicação com a API Nacional.",
       detalhes: erroGoverno
     };
   }
 };
 
 /**
- * 🔍 FUNÇÃO DE CONSULTA: Para conferir o protocolo guardado
+ * 🔍 FUNÇÃO DE CONSULTA: Para conferir o status pelo protocolo
  */
 export const consultarProtocolo = async (protocolo: string) => {
   try {
