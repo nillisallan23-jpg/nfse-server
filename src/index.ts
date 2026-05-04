@@ -1,175 +1,88 @@
 import dotenv from 'dotenv';
-
 import express, { Request, Response } from 'express';
+// Importamos as duas funções: uma para XML direto e outra para o JSON (DadosDPS)
+import { emitirNotaNacional, emitirNotaNacionalFromDados } from './services/adnService';
 
-import { emitirNotaNacional } from './services/adnService';
-
-
-
-// Carrega as variáveis do arquivo .env (local) ou do Railway
-
+// Carrega as variáveis do ambiente
 dotenv.config();
-
-
 
 const app = express();
 
-
-
-// Aumentamos o limite para 10mb para garantir que XMLs grandes não sejam bloqueados
-
-app.use(express.json({ limit: '10mb' }));
-
-
+// Aumentamos o limite para garantir o recebimento de payloads maiores
+app.use(express.json({ limit: '15mb' }));
 
 /**
-
  * 🩺 ROTA DE SAÚDE (HEALTH CHECK)
-
- * Serve para verificar se o servidor está online e configurado.
-
- * Acesse: https://pix-check-instant-view-production.up.railway.app/health
-
  */
-
 app.get('/health', (req: Request, res: Response) => {
-
   res.json({
-
     status: 'ok',
-
     modelo: 'ADN Nacional (Serpro)',
-
-    ambiente: process.env.ADN_AMBIENTE === '2' ? 'Homologação/Restrita' : 'Produção',
-
-    servico: 'pix-check-instant-view',
-
+    ambiente: process.env.ADN_AMBIENTE === 'producao' ? 'Produção' : 'Homologação/Restrita',
+    repositorio: 'nfse-server',
     timestamp: new Date().toISOString()
-
   });
-
 });
 
-
-
 /**
-
  * 🏠 ROTA RAIZ
-
  */
-
 app.get('/', (req: Request, res: Response) => {
-
-  res.send('🚀 Servidor de Emissão NFS-e Nacional ADN está operando!');
-
+  res.send('🚀 Servidor de Emissão NFS-e Nacional (NFSe-Server) operando!');
 });
 
-
-
 /**
-
  * 📄 POST /nfse/emitir
-
- * Recebe o XML do MeConferi e repassa para o adnService processar (Gzip + Base64).
-
+ * Rota inteligente: identifica se você enviou XML ou JSON e processa adequadamente.
  */
-
 app.post('/nfse/emitir', async (req: Request, res: Response) => {
-
   try {
+    const payload = req.body;
 
-    const { xml } = req.body;
-
-
-
-    // Validação básica do campo obrigatório
-
-    if (!xml || typeof xml !== 'string') {
-
+    if (!payload || Object.keys(payload).length === 0) {
       return res.status(400).json({
-
         sucesso: false,
-
-        mensagem: 'O campo "xml" é obrigatório e deve ser uma string.'
-
+        mensagem: 'Requisição vazia.'
       });
-
     }
 
+    let resultado;
 
-
-    console.log(`\n━━━ INÍCIO DO PROCESSAMENTO: ${new Date().toISOString()} ━━━`);
-
-    console.log(`Tamanho do XML original: ${xml.length} caracteres.`);
-
-
-
-    // Chama a função profissional de integração com o Serpro
-
-    const resultado = await emitirNotaNacional(xml);
-
-
+    // Lógica de Decisão:
+    if (payload.xml && typeof payload.xml === 'string') {
+      // Se enviou { "xml": "<xml>..." }
+      console.log(`\n[${new Date().toISOString()}] 📨 Recebido XML para envio direto.`);
+      resultado = await emitirNotaNacional(payload.xml);
+    } else {
+      // Se enviou o JSON completo (DadosDPS)
+      console.log(`\n[${new Date().toISOString()}] 📥 Recebido JSON. Iniciando fluxo de assinatura automática.`);
+      resultado = await emitirNotaNacionalFromDados(payload);
+    }
 
     if (resultado.sucesso) {
-
-      console.log('✅ Emissão concluída com sucesso.');
-
+      console.log('✅ Processo finalizado com sucesso.');
       return res.status(200).json(resultado);
-
     } else {
-
-      console.error('⚠️ Falha na emissão pela API Nacional.');
-
+      console.error('⚠️ Falha na operação.');
       return res.status(422).json(resultado);
-
     }
 
-
-
   } catch (error: any) {
-
-    console.error('❌ Erro inesperado no servidor:', error.message);
-
+    console.error('❌ Erro crítico no endpoint /emitir:', error.message);
     return res.status(500).json({
-
       sucesso: false,
-
-      mensagem: 'Erro interno ao processar a nota fiscal.',
-
+      mensagem: 'Erro interno no servidor.',
       erro: error.message
-
     });
-
   }
-
 });
-
-
-
-/**
-
- * 🚀 CONFIGURAÇÃO DA PORTA
-
- * O Railway injeta a porta correta na variável process.env.PORT.
-
- * Se não existir (local), usa a 8080.
-
- */
 
 const PORT = process.env.PORT || 8080;
 
-
-
 app.listen(PORT, () => {
-
   console.log(`\n==============================================`);
-
-  console.log(`🚀 SERVIDOR RODANDO NA PORTA: ${PORT}`);
-
-  console.log(`🩺 HEALTH CHECK: http://localhost:${PORT}/health`);
-
-  console.log(`📄 EMISSÃO: http://localhost:${PORT}/nfse/emitir`);
-
+  console.log(`🚀 SERVIDOR NFSE-SERVER ATIVO`);
+  console.log(`📡 PORTA: ${PORT}`);
+  console.log(`🔗 REPOSITÓRIO: nillisallan23-jpg/nfse-server`);
   console.log(`==============================================\n`);
-
 });
