@@ -60,7 +60,6 @@ export function criarAgenteMTLS(): https.Agent {
     const { keyPem, certPem, caPem } = pfxParaPem(pfxBuffer, pfxPassword);
     const caArray: string[] = [];
 
-    // Tenta carregar o bundle de CAs da ICP-Brasil se existir
     const bundlePath = './certs/icp-brasil/icp-bundle.pem';
     if (fs.existsSync(bundlePath)) {
       const bundleContent = fs.readFileSync(bundlePath, 'utf-8');
@@ -88,57 +87,76 @@ export const emitirNotaNacional = async (xml: string) => {
   try {
     const agente = criarAgenteMTLS();
     
-    if (!xml || xml.length < 10) throw new Error("XML inválido.");
+    if (!xml || xml.length < 10) throw new Error("XML fornecido está vazio ou é inválido.");
 
     const bufferGzip = zlib.gzipSync(xml);
     const xmlBase64 = bufferGzip.toString('base64');
     
     const url = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
 
-    console.log(`📤 [ADN] Enviando XML Gzip-Base64 (${xmlBase64.length} chars)`);
+    console.log(`📤 [ADN] Enviando para: ${url}`);
+    console.log(`📦 Tamanho do Base64: ${xmlBase64.length} caracteres`);
 
     const payload = {
       Identificador: process.env.IDENTIFICADOR_ENVIO || "ID_PROD",
       CnpjConcessionaria: process.env.ADN_CNPJ_CONCESSIONARIA || "",
-      Conteudo: xmlBase64,       // Campo padrão NFSe-V
-      XmlGzipBase64: xmlBase64   // Redundância para ADN
+      Conteudo: xmlBase64,
+      XmlGzipBase64: xmlBase64,
+      xmlGzipBase64: xmlBase64
     };
 
     const resposta = await axios.post(url, payload, {
       httpsAgent: agente,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
       timeout: 30000 
     });
 
     return { sucesso: true, dados: resposta.data };
 
   } catch (error: any) {
-    return { sucesso: false, mensagem: "Erro na comunicação", detalhes: error.response?.data || error.message };
+    const erroGoverno = error.response?.data;
+    console.error('❌ [ADN] Erro na Emissão:', JSON.stringify(erroGoverno || error.message));
+
+    return {
+      sucesso: false,
+      mensagem: "Falha na comunicação com a API Nacional.",
+      detalhes: erroGoverno
+    };
   }
 };
 
 /**
  * ✍️ FUNÇÃO: Recebe Dados (JSON), Monta XML, Assina e Envia
- * Use esta função para enviar dados direto do MeConferi/Supabase
+ * (Esta é a função que o seu index.ts estava procurando)
  */
 export const emitirNotaNacionalFromDados = async (dados: any) => {
   try {
-    console.log("🖊️ [ADN] Iniciando montagem e assinatura do XML...");
+    console.log("🖊️ [ADN] Iniciando fluxo de assinatura automática...");
     
-    // Aqui viria a lógica de montagem do XML baseada no seu template DPS
-    // Por enquanto, simulamos o fluxo de processamento
-    const xmlMontado = `<?xml version="1.0" encoding="UTF-8"?><DPS>...</DPS>`; // Implementar sua montagem aqui
-
-    // Reaproveita a função de envio
-    return await emitirNotaNacional(xmlMontado);
+    // Se o JSON já contiver um campo 'xml', usamos ele diretamente
+    if (dados && dados.xml) {
+        return await emitirNotaNacional(dados.xml);
+    }
+    
+    // Caso contrário, você pode implementar aqui a lógica de montar o XML 
+    // a partir dos dados do MeConferi.
+    throw new Error("O campo 'xml' não foi encontrado no JSON enviado.");
 
   } catch (error: any) {
-    return { sucesso: false, mensagem: "Erro na assinatura/montagem", erro: error.message };
+    console.error('❌ [ADN] Erro no processamento de dados:', error.message);
+    return { 
+      sucesso: false, 
+      mensagem: "Erro ao processar dados brutos", 
+      erro: error.message 
+    };
   }
 };
 
 /**
- * 🔍 FUNÇÃO: Consulta por Protocolo
+ * 🔍 FUNÇÃO DE CONSULTA: Para conferir o status pelo protocolo
  */
 export const consultarProtocolo = async (protocolo: string) => {
   try {
