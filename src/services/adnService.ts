@@ -173,4 +173,4 @@ export const consultarProtocolo = async (protocolo: string) => {
   } catch (error: any) {
     return { sucesso: false, detalhes: error.response?.data || error.message };
   }
-};
+}; 
