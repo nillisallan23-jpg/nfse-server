@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 import express, { Request, Response } from 'express';
-// Importamos as duas funções: uma para XML direto e outra para o JSON (DadosDPS)
-import { emitirNotaNacional, emitirNotaNacionalFromDados } from './services/adnService';
+// Importamos as duas funções: uma para XML direto e outra para o TESTE de sanidade
+import { emitirNotaNacional, testeEmissao } from './services/adnService';
 
 // Carrega as variáveis do ambiente
 dotenv.config();
@@ -54,9 +54,9 @@ app.post('/nfse/emitir', async (req: Request, res: Response) => {
       console.log(`\n[${new Date().toISOString()}] 📨 Recebido XML para envio direto.`);
       resultado = await emitirNotaNacional(payload.xml);
     } else {
-      // Se enviou o JSON completo (DadosDPS)
-      console.log(`\n[${new Date().toISOString()}] 📥 Recebido JSON. Iniciando fluxo de assinatura automática.`);
-      resultado = await emitirNotaNacionalFromDados(payload);
+      // Se enviou o JSON completo (DadosDPS) - Usando a função de TESTE
+      console.log(`\n[${new Date().toISOString()}] 📥 Recebido JSON. Iniciando teste de exportação.`);
+      resultado = await testeEmissao(payload);
     }
 
     if (resultado.sucesso) {
