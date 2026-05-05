@@ -129,27 +129,23 @@ export const emitirNotaNacional = async (xml: string) => {
 };
 
 /**
- * ✍️ FUNÇÃO: Recebe Dados (JSON), Monta XML, Assina e Envia
- * (Esta é a função que o seu index.ts estava procurando)
+ * 🛠️ TESTE DE SANIDADE: Função renomeada para forçar atualização do compilador
  */
-export const emitirNotaNacionalFromDados = async (dados: any) => {
+export const testeEmissao = async (dados: any) => {
   try {
-    console.log("🖊️ [ADN] Iniciando fluxo de assinatura automática...");
+    console.log("🖊️ [ADN-TESTE] Verificando nova exportação no Railway...");
     
-    // Se o JSON já contiver um campo 'xml', usamos ele diretamente
     if (dados && dados.xml) {
         return await emitirNotaNacional(dados.xml);
     }
     
-    // Caso contrário, você pode implementar aqui a lógica de montar o XML 
-    // a partir dos dados do MeConferi.
     throw new Error("O campo 'xml' não foi encontrado no JSON enviado.");
 
   } catch (error: any) {
-    console.error('❌ [ADN] Erro no processamento de dados:', error.message);
+    console.error('❌ [ADN-TESTE] Erro no processamento:', error.message);
     return { 
       sucesso: false, 
-      mensagem: "Erro ao processar dados brutos", 
+      mensagem: "Erro no teste de exportação", 
       erro: error.message 
     };
   }
@@ -173,4 +169,4 @@ export const consultarProtocolo = async (protocolo: string) => {
   } catch (error: any) {
     return { sucesso: false, detalhes: error.response?.data || error.message };
   }
-}; 
+};
