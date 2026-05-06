@@ -86,3 +86,4 @@ app.listen(PORT, () => {
   console.log(`🔗 REPOSITÓRIO: nillisallan23-jpg/nfse-server`);
   console.log(`==============================================\n`);
 });
+ 
