@@ -129,11 +129,11 @@ export const emitirNotaNacional = async (xml: string) => {
 };
 
 /**
- * 🛠️ TESTE DE SANIDADE: Função renomeada para forçar atualização do compilador
+ * ✍️ FUNÇÃO: Recebe Dados (JSON), Monta XML, Assina e Envia
  */
-export const testeEmissao = async (dados: any) => {
+export const emitirNotaNacionalFromDados = async (dados: any) => {
   try {
-    console.log("🖊️ [ADN-TESTE] Verificando nova exportação no Railway...");
+    console.log("🖊️ [ADN] Iniciando fluxo de assinatura automática...");
     
     if (dados && dados.xml) {
         return await emitirNotaNacional(dados.xml);
@@ -142,10 +142,10 @@ export const testeEmissao = async (dados: any) => {
     throw new Error("O campo 'xml' não foi encontrado no JSON enviado.");
 
   } catch (error: any) {
-    console.error('❌ [ADN-TESTE] Erro no processamento:', error.message);
+    console.error('❌ [ADN] Erro no processamento de dados:', error.message);
     return { 
       sucesso: false, 
-      mensagem: "Erro no teste de exportação", 
+      mensagem: "Erro ao processar dados brutos", 
       erro: error.message 
     };
   }
