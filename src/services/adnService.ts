@@ -85,6 +85,12 @@ export function criarAgenteMTLS(): https.Agent {
  */
 export const emitirNotaNacional = async (xml: string) => {
   try {
+    // 🔍 DEBUG: Verificando o conteúdo do XML antes de enviar
+    console.log("--------------------------------------------------");
+    console.log("📄 [DEBUG] CONTEÚDO DO XML BRUTO QUE SERÁ ENVIADO:");
+    console.log(xml);
+    console.log("--------------------------------------------------");
+
     const agente = criarAgenteMTLS();
     
     if (!xml || xml.length < 10) throw new Error("XML fornecido está vazio ou é inválido.");
@@ -134,6 +140,9 @@ export const emitirNotaNacional = async (xml: string) => {
 export const emitirNotaNacionalFromDados = async (dados: any) => {
   try {
     console.log("🖊️ [ADN] Iniciando fluxo de assinatura automática...");
+    
+    // 🔍 DEBUG: Verificando o JSON completo que chegou do Supabase
+    console.log("📦 [DEBUG] JSON RECEBIDO NO RAILWAY:", JSON.stringify(dados, null, 2));
     
     if (dados && dados.xml) {
         return await emitirNotaNacional(dados.xml);
