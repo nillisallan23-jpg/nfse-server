@@ -48,14 +48,23 @@ app.post('/nfse/emitir', async (req: Request, res: Response) => {
 
     let resultado;
 
-    // Lógica de Decisão:
+    // 💡 AJUSTE DE FLEXIBILIDADE:
+    // Captura os dados independentemente se a chave é 'xml' ou 'dadosDPS'
+    const dadosParaProcessar = payload.dadosDPS || payload.xml;
+
+    // 1. Se enviou uma string de XML (formato antigo ou direto)
     if (payload.xml && typeof payload.xml === 'string') {
-      // Se enviou { "xml": "<xml>..." }
       console.log(`\n[${new Date().toISOString()}] 📨 Recebido XML para envio direto.`);
       resultado = await emitirNotaNacional(payload.xml);
-    } else {
-      // Se enviou o JSON completo (DadosDPS)
-      console.log(`\n[${new Date().toISOString()}] 📥 Recebido JSON. Iniciando fluxo de emissão.`);
+    } 
+    // 2. Se enviou o objeto estruturado (dadosDPS)
+    else if (payload.dadosDPS) {
+      console.log(`\n[${new Date().toISOString()}] 📥 Recebido objeto dadosDPS. Iniciando fluxo.`);
+      resultado = await emitirNotaNacionalFromDados(payload.dadosDPS);
+    }
+    // 3. Caso o JSON tenha sido enviado sem "embrulho", tenta processar o payload inteiro
+    else {
+      console.log(`\n[${new Date().toISOString()}] 📥 Recebido JSON direto. Tentando processamento.`);
       resultado = await emitirNotaNacionalFromDados(payload);
     }
 
@@ -86,4 +95,3 @@ app.listen(PORT, () => {
   console.log(`🔗 REPOSITÓRIO: nillisallan23-jpg/nfse-server`);
   console.log(`==============================================\n`);
 });
- 
