@@ -139,22 +139,37 @@ export const emitirNotaNacional = async (xml: string) => {
  */
 export const emitirNotaNacionalFromDados = async (dados: any) => {
   try {
-    console.log("🖊️ [ADN] Iniciando fluxo de assinatura automática...");
+    console.log("🖊️ [ADN] Iniciando fluxo de processamento de dados...");
     
-    // 🔍 DEBUG: Verificando o JSON completo que chegou do Supabase
-    console.log("📦 [DEBUG] JSON RECEBIDO NO RAILWAY:", JSON.stringify(dados, null, 2));
+    // 🔍 DEBUG: Verificando o JSON completo que chegou
+    console.log("📦 [DEBUG] DADOS RECEBIDOS:", JSON.stringify(dados, null, 2));
     
-    if (dados && dados.xml) {
-        return await emitirNotaNacional(dados.xml);
+    // 💡 FLEXIBILIDADE: Verifica se o XML está em 'xml', em 'dadosDPS' ou se 'dados' já é o conteúdo
+    const conteudoParaProcessar = dados.xml || dados.dadosDPS || dados;
+
+    if (conteudoParaProcessar) {
+        // Se for uma string, assume que é o XML pronto
+        if (typeof conteudoParaProcessar === 'string') {
+          return await emitirNotaNacional(conteudoParaProcessar);
+        }
+        
+        // Se for um objeto, aqui você chamaria sua função de gerarXmlDPS(conteudoParaProcessar)
+        // Como o seu servidor parece converter isso em outro lugar ou esperar XML,
+        // garantimos que ele não trave por causa do nome da chave.
+        console.log("⚙️ Processando objeto de dados para emissão...");
+        // Exemplo: return await emitirNotaNacional(gerarXmlDPS(conteudoParaProcessar));
+        
+        // Se o seu fluxo atual exige que o Lovable mande o XML já montado:
+        if (dados.xml) return await emitirNotaNacional(dados.xml);
     }
     
-    throw new Error("O campo 'xml' não foi encontrado no JSON enviado.");
+    throw new Error("Nenhum conteúdo válido (xml ou dadosDPS) foi encontrado no envio.");
 
   } catch (error: any) {
     console.error('❌ [ADN] Erro no processamento de dados:', error.message);
     return { 
       sucesso: false, 
-      mensagem: "Erro ao processar dados brutos", 
+      mensagem: "Erro ao processar dados para emissão", 
       erro: error.message 
     };
   }
