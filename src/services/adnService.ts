@@ -85,7 +85,6 @@ export function criarAgenteMTLS(): https.Agent {
  */
 export const emitirNotaNacional = async (xml: string) => {
   try {
-    // 🔍 DEBUG: Verificando o conteúdo do XML antes de enviar
     console.log("--------------------------------------------------");
     console.log("📄 [DEBUG] CONTEÚDO DO XML BRUTO QUE SERÁ ENVIADO:");
     console.log(xml);
@@ -141,35 +140,61 @@ export const emitirNotaNacionalFromDados = async (dados: any) => {
   try {
     console.log("🖊️ [ADN] Iniciando fluxo de processamento...");
     
-    // 🔍 DEBUG: Verificando o JSON completo que chegou
-    console.log("📦 [DEBUG] DADOS RECEBIDOS NO SERVICE:", JSON.stringify(dados, null, 2));
-    
-    // 💡 FLEXIBILIDADE TOTAL: Tenta encontrar o conteúdo em várias chaves possíveis
-    const conteudo = dados.xml || dados.dadosDPS || dados;
+    // 💡 FLEXIBILIDADE TOTAL: Tenta encontrar o conteúdo
+    const payload = dados.dadosDPS || dados;
 
-    if (!conteudo) {
+    if (!payload) {
         throw new Error("Nenhum conteúdo válido encontrado para emissão.");
     }
 
-    // CASO 1: O conteúdo já é uma string (XML Assinado vindo do Lovable/Supabase)
-    if (typeof conteudo === 'string') {
+    // CASO 1: Já é uma string (XML Pronto)
+    if (typeof payload === 'string') {
         console.log("📄 Conteúdo identificado como XML String. Enviando...");
-        return await emitirNotaNacional(conteudo);
+        return await emitirNotaNacional(payload);
     }
 
-    // CASO 2: O conteúdo é um objeto (Dados brutos para montagem de XML)
-    if (typeof conteudo === 'object') {
-        console.log("⚙️ Conteúdo identificado como Objeto. Verificando conversão...");
+    // CASO 2: É um objeto (Precisa virar XML)
+    if (typeof payload === 'object') {
+        console.log("⚙️ Convertendo Objeto para XML DPS...");
         
-        // Se dentro do objeto existir uma propriedade .xml (caso o objeto esteja aninhado)
-        if (conteudo.xml && typeof conteudo.xml === 'string') {
-            return await emitirNotaNacional(conteudo.xml);
+        // Se houver uma string XML dentro do objeto
+        if (payload.xml && typeof payload.xml === 'string') {
+            return await emitirNotaNacional(payload.xml);
         }
 
-        // Se chegamos aqui com um objeto e sem XML pronto, o servidor precisaria 
-        // de uma função gerarXml(conteudo). Como o Lovable já costuma mandar o XML,
-        // vamos garantir que ele tente ler a string se ela existir.
-        throw new Error("O servidor recebeu um objeto, mas esperava uma string XML. Verifique o envio do Lovable.");
+        // Montagem do XML baseada na estrutura do Serpro/Nacional
+        const xmlGerado = `<?xml version="1.0" encoding="UTF-8"?>
+<DPS xmlns="http://www.nfse.gov.br/Schema/nfse_v1.00.xsd" versao="1.00">
+  <infDPS Id="${payload.id || 'ID' + Date.now()}">
+    <tpAmb>${payload.tpAmb || '2'}</tpAmb>
+    <dhEmi>${payload.dhEmi || new Date().toISOString().split('.')[0] + 'Z'}</dhEmi>
+    <verAplic>1.0</verAplic>
+    <prestador>
+      <cnpj>${payload.prestador?.cnpj || ''}</cnpj>
+    </prestador>
+    <tomador>
+      <identificacao>
+        <cpf>${payload.tomador?.cpfCnpj || ''}</cpf>
+      </identificacao>
+      <razaoSocial>${payload.tomador?.razaoSocial || ''}</razaoSocial>
+      <endNac>
+        <logradouro>${payload.tomador?.endereco?.logradouro || ''}</logradouro>
+        <numero>${payload.tomador?.endereco?.numero || ''}</numero>
+        <bairro>${payload.tomador?.endereco?.bairro || ''}</bairro>
+        <uf>${payload.tomador?.endereco?.uf || ''}</uf>
+        <cep>${payload.tomador?.endereco?.cep || ''}</cep>
+      </endNac>
+    </tomador>
+    <serv>
+      <cServ>
+        <cTribNac>${payload.servico?.codigoNacional || ''}</cTribNac>
+      </cServ>
+      <vServPrest>${payload.servico?.valorServicos || '0.00'}</vServPrest>
+    </serv>
+  </infDPS>
+</DPS>`.trim();
+
+        return await emitirNotaNacional(xmlGerado);
     }
     
     throw new Error("Formato de dados desconhecido.");
@@ -185,7 +210,7 @@ export const emitirNotaNacionalFromDados = async (dados: any) => {
 };
 
 /**
- * 🔍 FUNÇÃO DE CONSULTA: Para conferir o status pelo protocolo
+ * 🔍 FUNÇÃO DE CONSULTA
  */
 export const consultarProtocolo = async (protocolo: string) => {
   try {
