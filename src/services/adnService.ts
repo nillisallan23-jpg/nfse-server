@@ -135,35 +135,44 @@ export const emitirNotaNacional = async (xml: string) => {
 };
 
 /**
- * ✍️ FUNÇÃO: Recebe Dados (JSON), Monta XML, Assina e Envia
+ * ✍️ FUNÇÃO: Recebe Dados (JSON), identifica o formato e processa
  */
 export const emitirNotaNacionalFromDados = async (dados: any) => {
   try {
-    console.log("🖊️ [ADN] Iniciando fluxo de processamento de dados...");
+    console.log("🖊️ [ADN] Iniciando fluxo de processamento...");
     
     // 🔍 DEBUG: Verificando o JSON completo que chegou
-    console.log("📦 [DEBUG] DADOS RECEBIDOS:", JSON.stringify(dados, null, 2));
+    console.log("📦 [DEBUG] DADOS RECEBIDOS NO SERVICE:", JSON.stringify(dados, null, 2));
     
-    // 💡 FLEXIBILIDADE: Verifica se o XML está em 'xml', em 'dadosDPS' ou se 'dados' já é o conteúdo
-    const conteudoParaProcessar = dados.xml || dados.dadosDPS || dados;
+    // 💡 FLEXIBILIDADE TOTAL: Tenta encontrar o conteúdo em várias chaves possíveis
+    const conteudo = dados.xml || dados.dadosDPS || dados;
 
-    if (conteudoParaProcessar) {
-        // Se for uma string, assume que é o XML pronto
-        if (typeof conteudoParaProcessar === 'string') {
-          return await emitirNotaNacional(conteudoParaProcessar);
+    if (!conteudo) {
+        throw new Error("Nenhum conteúdo válido encontrado para emissão.");
+    }
+
+    // CASO 1: O conteúdo já é uma string (XML Assinado vindo do Lovable/Supabase)
+    if (typeof conteudo === 'string') {
+        console.log("📄 Conteúdo identificado como XML String. Enviando...");
+        return await emitirNotaNacional(conteudo);
+    }
+
+    // CASO 2: O conteúdo é um objeto (Dados brutos para montagem de XML)
+    if (typeof conteudo === 'object') {
+        console.log("⚙️ Conteúdo identificado como Objeto. Verificando conversão...");
+        
+        // Se dentro do objeto existir uma propriedade .xml (caso o objeto esteja aninhado)
+        if (conteudo.xml && typeof conteudo.xml === 'string') {
+            return await emitirNotaNacional(conteudo.xml);
         }
-        
-        // Se for um objeto, aqui você chamaria sua função de gerarXmlDPS(conteudoParaProcessar)
-        // Como o seu servidor parece converter isso em outro lugar ou esperar XML,
-        // garantimos que ele não trave por causa do nome da chave.
-        console.log("⚙️ Processando objeto de dados para emissão...");
-        // Exemplo: return await emitirNotaNacional(gerarXmlDPS(conteudoParaProcessar));
-        
-        // Se o seu fluxo atual exige que o Lovable mande o XML já montado:
-        if (dados.xml) return await emitirNotaNacional(dados.xml);
+
+        // Se chegamos aqui com um objeto e sem XML pronto, o servidor precisaria 
+        // de uma função gerarXml(conteudo). Como o Lovable já costuma mandar o XML,
+        // vamos garantir que ele tente ler a string se ela existir.
+        throw new Error("O servidor recebeu um objeto, mas esperava uma string XML. Verifique o envio do Lovable.");
     }
     
-    throw new Error("Nenhum conteúdo válido (xml ou dadosDPS) foi encontrado no envio.");
+    throw new Error("Formato de dados desconhecido.");
 
   } catch (error: any) {
     console.error('❌ [ADN] Erro no processamento de dados:', error.message);
