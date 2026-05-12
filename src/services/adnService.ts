@@ -85,37 +85,33 @@ export function criarAgenteMTLS(): https.Agent {
  */
 export const emitirNotaNacional = async (xml: string) => {
   try {
+    // 🛡️ LIMPEZA CANÔNICA: Remove espaços entre tags (Evita Erro 203)
+    const xmlFinal = xml.replace(/>\s+</g, '><').trim();
+
     console.log("--------------------------------------------------");
-    console.log("📄 [DEBUG] CONTEÚDO DO XML BRUTO QUE SERÁ ENVIADO:");
-    console.log(xml);
+    console.log("📄 [DEBUG] XML LIMPO PARA ENVIO:");
+    console.log(xmlFinal);
     console.log("--------------------------------------------------");
 
     const agente = criarAgenteMTLS();
     
-    if (!xml || xml.length < 10) throw new Error("XML fornecido está vazio ou é inválido.");
+    if (!xmlFinal || xmlFinal.length < 10) throw new Error("XML fornecido está vazio.");
 
-    const bufferGzip = zlib.gzipSync(xml);
+    const bufferGzip = zlib.gzipSync(xmlFinal);
     const xmlBase64 = bufferGzip.toString('base64');
     
     const url = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
-
-    console.log(`📤 [ADN] Enviando para: ${url}`);
-    console.log(`📦 Tamanho do Base64: ${xmlBase64.length} caracteres`);
 
     const payload = {
       Identificador: process.env.IDENTIFICADOR_ENVIO || "ID_PROD",
       CnpjConcessionaria: process.env.ADN_CNPJ_CONCESSIONARIA || "",
       Conteudo: xmlBase64,
-      XmlGzipBase64: xmlBase64,
-      xmlGzipBase64: xmlBase64
+      XmlGzipBase64: xmlBase64
     };
 
     const resposta = await axios.post(url, payload, {
       httpsAgent: agente,
-      headers: { 
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       timeout: 30000 
     });
 
@@ -124,105 +120,67 @@ export const emitirNotaNacional = async (xml: string) => {
   } catch (error: any) {
     const erroGoverno = error.response?.data;
     console.error('❌ [ADN] Erro na Emissão:', JSON.stringify(erroGoverno || error.message));
-
-    return {
-      sucesso: false,
-      mensagem: "Falha na comunicação com a API Nacional.",
-      detalhes: erroGoverno
-    };
+    return { sucesso: false, mensagem: "Falha na API Nacional.", detalhes: erroGoverno };
   }
 };
 
 /**
- * ✍️ FUNÇÃO: Recebe Dados (JSON), identifica o formato e processa
+ * ✍️ FUNÇÃO: Recebe Dados (JSON) e processa
  */
 export const emitirNotaNacionalFromDados = async (dados: any) => {
   try {
-    console.log("🖊️ [ADN] Iniciando fluxo de processamento...");
-    
-    // 💡 FLEXIBILIDADE TOTAL: Tenta encontrar o conteúdo
     const payload = dados.dadosDPS || dados;
+    if (!payload) throw new Error("Conteúdo inválido.");
 
-    if (!payload) {
-        throw new Error("Nenhum conteúdo válido encontrado para emissão.");
-    }
+    if (typeof payload === 'string') return await emitirNotaNacional(payload);
 
-    // CASO 1: Já é uma string (XML Pronto)
-    if (typeof payload === 'string') {
-        console.log("📄 Conteúdo identificado como XML String. Enviando...");
-        return await emitirNotaNacional(payload);
-    }
-
-    // CASO 2: É um objeto (Precisa virar XML)
     if (typeof payload === 'object') {
-        console.log("⚙️ Convertendo Objeto para XML DPS...");
-        
-        // Se houver uma string XML dentro do objeto
-        if (payload.xml && typeof payload.xml === 'string') {
-            return await emitirNotaNacional(payload.xml);
-        }
+        if (payload.xml && typeof payload.xml === 'string') return await emitirNotaNacional(payload.xml);
 
-        // Montagem do XML baseada na estrutura do Serpro/Nacional
+        // Ajuste de documento tomador
+        const docToma = String(payload.tomador?.cpfCnpj || '').replace(/\D/g, '');
+        const tagDocToma = docToma.length === 11 ? `<CPF>${docToma}</CPF>` : `<CNPJ>${docToma}</CNPJ>`;
+
+        // XML CORRIGIDO (Tags Curtas + Sem lixo) para evitar Erro 210/203
         const xmlGerado = `<?xml version="1.0" encoding="UTF-8"?>
 <DPS xmlns="http://www.nfse.gov.br/Schema/nfse_v1.00.xsd" versao="1.00">
-  <infDPS Id="${payload.id || 'ID' + Date.now()}">
+  <infDPS Id="DPS${Date.now()}">
     <tpAmb>${payload.tpAmb || '2'}</tpAmb>
-    <dhEmi>${payload.dhEmi || new Date().toISOString().split('.')[0] + 'Z'}</dhEmi>
+    <dhEmi>${new Date().toISOString().split('.')[0]}</dhEmi>
     <verAplic>1.0</verAplic>
-    <prestador>
-      <cnpj>${payload.prestador?.cnpj || ''}</cnpj>
-    </prestador>
-    <tomador>
-      <identificacao>
-        <cpf>${payload.tomador?.cpfCnpj || ''}</cpf>
-      </identificacao>
-      <razaoSocial>${payload.tomador?.razaoSocial || ''}</razaoSocial>
-      <endNac>
-        <logradouro>${payload.tomador?.endereco?.logradouro || ''}</logradouro>
-        <numero>${payload.tomador?.endereco?.numero || ''}</numero>
-        <bairro>${payload.tomador?.endereco?.bairro || ''}</bairro>
-        <uf>${payload.tomador?.endereco?.uf || ''}</uf>
-        <cep>${payload.tomador?.endereco?.cep || ''}</cep>
-      </endNac>
-    </tomador>
+    <prest><CNPJ>${String(payload.prestador?.cnpj || '').replace(/\D/g, '')}</CNPJ></prest>
+    <toma>
+      <identificacao>${tagDocToma}</identificacao>
+      <nm>${(payload.tomador?.razaoSocial || '').substring(0, 60)}</nm>
+      <end>
+        <xLgr>${(payload.tomador?.endereco?.logradouro || '').substring(0, 60)}</xLgr>
+        <nro>${payload.tomador?.endereco?.numero || 'SN'}</nro>
+        <xBairro>${payload.tomador?.endereco?.bairro || ''}</xBairro>
+        <cMun>${payload.tomador?.endereco?.codigoMunicipio || ''}</cMun>
+        <UF>${payload.tomador?.endereco?.uf || ''}</UF>
+        <CEP>${String(payload.tomador?.endereco?.cep || '').replace(/\D/g, '')}</CEP>
+      </end>
+    </toma>
     <serv>
-      <cServ>
-        <cTribNac>${payload.servico?.codigoNacional || ''}</cTribNac>
-      </cServ>
-      <vServPrest>${payload.servico?.valorServicos || '0.00'}</vServPrest>
+      <cServ><cTribNac>${payload.servico?.codigoNacional || ''}</cTribNac></cServ>
+      <vServPrest>${Number(payload.servico?.valorServicos || 0).toFixed(2)}</vServPrest>
     </serv>
   </infDPS>
 </DPS>`.trim();
 
         return await emitirNotaNacional(xmlGerado);
     }
-    
-    throw new Error("Formato de dados desconhecido.");
-
+    throw new Error("Formato desconhecido.");
   } catch (error: any) {
-    console.error('❌ [ADN] Erro no processamento de dados:', error.message);
-    return { 
-      sucesso: false, 
-      mensagem: "Erro ao processar dados para emissão", 
-      erro: error.message 
-    };
+    return { sucesso: false, mensagem: "Erro ao processar dados", erro: error.message };
   }
 };
 
-/**
- * 🔍 FUNÇÃO DE CONSULTA
- */
 export const consultarProtocolo = async (protocolo: string) => {
   try {
     const agente = criarAgenteMTLS();
     const url = `https://certificado.api.via.nfse.gov.br/recepcao/consultar/nfsev/${protocolo}`;
-
-    const resposta = await axios.get(url, {
-      httpsAgent: agente,
-      headers: { 'Accept': 'application/json' },
-      timeout: 15000 
-    });
-
+    const resposta = await axios.get(url, { httpsAgent: agente, headers: { 'Accept': 'application/json' }, timeout: 15000 });
     return { sucesso: true, dados: resposta.data };
   } catch (error: any) {
     return { sucesso: false, detalhes: error.response?.data || error.message };
