@@ -1,7 +1,11 @@
 import dotenv from 'dotenv';
 import express, { Request, Response } from 'express';
-// Importamos as funções originais do serviço
-import { emitirNotaNacional, emitirNotaNacionalFromDados } from './services/adnService';
+// Importamos todas as funções necessárias do serviço (incluindo o consultarProtocolo)
+import { 
+  emitirNotaNacional, 
+  emitirNotaNacionalFromDados, 
+  consultarProtocolo 
+} from './services/adnService';
 
 // Carrega as variáveis do ambiente
 dotenv.config();
@@ -86,33 +90,27 @@ app.post('/nfse/emitir', async (req: Request, res: Response) => {
   }
 });
 
-const PORT = process.env.PORT || 8080;
-
-app.listen(PORT, () => {
-  console.log(`\n==============================================`);
-  console.log(`🚀 SERVIDOR NFSE-SERVER ATIVO`);
-  console.log(`📡 PORTA: ${PORT}`);
-  console.log(`🔗 REPOSITÓRIO: nillisallan23-jpg/nfse-server`);
-  console.log(`==============================================\n`);
-});
-// Certifique-se de que o consultarProtocolo está sendo importado do adnService
-import { emitirNotaNacional, consultarProtocolo } from './services/adnService';
-
-// ... suas outras rotas existentes (como o /nfse/emitir) ...
-
-// Adicione este endpoint para o Lovable consultar o status
-app.post('/nfse/consultar', async (req, res) => {
+/**
+ * 🔍 POST /nfse/consultar
+ * Rota que o Lovable chama para verificar se a prefeitura liberou a nota do protocolo assíncrono.
+ */
+app.post('/nfse/consultar', async (req: Request, res: Response) => {
   try {
     const { protocolo } = req.body;
 
     if (!protocolo) {
-      return res.status(400).json({ sucesso: false, erro: 'Protocolo é obrigatório.' });
+      return res.status(400).json({ 
+        sucesso: false, 
+        erro: 'Protocolo é obrigatório.' 
+      });
     }
 
-    // Chama a função que já existe no seu adnService
+    console.log(`\n[${new Date().toISOString()}] 🔍 Consultando status do protocolo: ${protocolo}`);
+
+    // Chama a função existente no adnService
     const resultado = await consultarProtocolo(protocolo);
 
-    // Retorna a estrutura exata que o Lovable pediu
+    // Retorna a estrutura exata que o Lovable precisa interpretar
     return res.json({
       sucesso: true,
       dados: {
@@ -125,7 +123,20 @@ app.post('/nfse/consultar', async (req, res) => {
     });
 
   } catch (error: any) {
-    console.error('Erro ao consultar protocolo:', error);
-    return res.status(500).json({ sucesso: false, erro: error.message });
+    console.error('❌ Erro ao consultar protocolo:', error.message);
+    return res.status(500).json({ 
+      sucesso: false, 
+      erro: error.message 
+    });
   }
+});
+
+const PORT = process.env.PORT || 8080;
+
+app.listen(PORT, () => {
+  console.log(`\n==============================================`);
+  console.log(`🚀 SERVIDOR NFSE-SERVER ATIVO`);
+  console.log(`📡 PORTA: ${PORT}`);
+  console.log(`🔗 REPOSITÓRIO: nillisallan23-jpg/nfse-server`);
+  console.log(`==============================================\n`);
 });
