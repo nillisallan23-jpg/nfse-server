@@ -1,138 +1,73 @@
-import dotenv from 'dotenv';
 import express from 'express';
-// Importamos todas as funções necessárias do serviço (incluindo o consultarProtocolo)
-import { 
-  emitirNotaNacional, 
-  emitirNotaNacionalFromDados, 
-  consultarProtocolo 
-} from './services/adnService';
-
-// Carrega as variáveis do ambiente
-dotenv.config();
+import cors from 'cors';
+import * as adnService from './services/adnService';
 
 const app = express();
+app.use(cors());
+app.use(express.json());
 
-// Aumentamos o limite para garantir o recebimento de payloads maiores
-app.use(express.json({ limit: '15mb' }));
-
-/**
- * 🩺 ROTA DE SAÚDE (HEALTH CHECK)
- */
-app.get('/health', (_req: any, res: any) => {
-  res.json({
-    status: 'ok',
-    modelo: 'ADN Nacional (Serpro)',
-    ambiente: process.env.ADN_AMBIENTE === 'producao' ? 'Produção' : 'Homologação/Restrita',
-    repositorio: 'nfse-server',
-    timestamp: new Date().toISOString()
-  });
+// Rota de Saúde do Servidor
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'online', ambiente: process.env.NFSE_AMBIENTE || 'producao' });
 });
 
 /**
- * 🏠 ROTA RAIZ
+ * 🚀 ROTA: Emissão de Nota
  */
-app.get('/', (_req: any, res: any) => {
-  res.send('🚀 Servidor de Emissão NFS-e Nacional (NFSe-Server) operando!');
-});
-
-/**
- * 📄 POST /nfse/emitir
- * Rota inteligente: identifica se você enviou XML ou JSON e processa adequadamente.
- */
-app.post('/nfse/emitir', async (req: any, res: any) => {
+app.post('/nfse/emitir', async (req, res) => {
   try {
-    const payload = req.body;
-
-    if (!payload || Object.keys(payload).length === 0) {
-      return res.status(400).json({
-        sucesso: false,
-        mensagem: 'Requisição vazia.'
-      });
-    }
-
-    let resultado;
-
-    // 1. Se enviou uma string de XML (formato antigo ou direto)
-    if (payload.xml && typeof payload.xml === 'string') {
-      console.log(`\n[${new Date().toISOString()}] 📨 Recebido XML para envio direto.`);
-      resultado = await emitirNotaNacional(payload.xml);
-    } 
-    // 2. Se enviou o objeto estruturado (dadosDPS)
-    else if (payload.dadosDPS) {
-      console.log(`\n[${new Date().toISOString()}] 📥 Recebido objeto dadosDPS. Iniciando fluxo.`);
-      resultado = await emitirNotaNacionalFromDados(payload.dadosDPS);
-    }
-    // 3. Caso o JSON tenha sido enviado sem "embrulho", tenta processar o payload inteiro
-    else {
-      console.log(`\n[${new Date().toISOString()}] 📥 Recebido JSON direto. Tentando processamento.`);
-      resultado = await emitirNotaNacionalFromDados(payload);
-    }
-
-    if (resultado.sucesso) {
-      console.log('✅ Processo finalizado com sucesso.');
-      return res.status(200).json(resultado);
-    } else {
-      console.error('⚠️ Falha na operação.');
-      return res.status(422).json(resultado);
-    }
-
-  } catch (error: any) {
-    console.error('❌ Erro crítico no endpoint /emitir:', error?.message || error);
-    return res.status(500).json({
-      sucesso: false,
-      mensagem: 'Erro interno no servidor.',
-      erro: error?.message || String(error)
-    });
+    console.log('[RAILWAY REQ] Nova requisição de emissão recebida.');
+    
+    // Usa a função de mapeamento direto que está exposta no adnService
+    const resultado = await adnService.emitirNotaNacionalFromDados(req.body);
+    return res.status(200).json(resultado);
+  } catch (erro: any) {
+    console.error('[RAILWAY ERR] Erro na emissão:', erro.message);
+    return res.status(500).json({ sucesso: false, mensagem: erro.message });
   }
 });
 
 /**
- * 🔍 POST /nfse/consultar
- * Rota que o Lovable chama para verificar se a prefeitura liberou a nota do protocolo assíncrono.
+ * 🔍 ROTA: Consulta de Protocolo
  */
-app.post('/nfse/consultar', async (req: any, res: any) => {
+app.get('/nfse/consultar/:protocolo', async (req, res) => {
   try {
-    const { protocolo } = req.body;
+    const { protocolo } = req.params;
+    console.log(`[RAILWAY REQ] Consultando status do protocolo: ${protocolo}`);
+    
+    const resultado = await adnService.consultarProtocolo(protocolo);
+    
+    // Tratamento flexível usando "as any" para burlar a trava de tipo do TS no retorno da API
+    const dadosResposta = resultado as any;
 
-    if (!protocolo) {
-      return res.status(400).json({ 
-        sucesso: false, 
-        erro: 'Protocolo é obrigatório.' 
+    if (dadosResposta.sucesso) {
+      return res.status(200).json({
+        sucesso: true,
+        dados: {
+          numeroNfse: dadosResposta.numeroNfse || (dadosResposta.dados ? dadosResposta.dados.numeroNfse : null),
+          chaveAcesso: dadosResposta.chaveAcesso || (dadosResposta.dados ? dadosResposta.dados.chaveAcesso : null),
+          xmlRetorno: dadosResposta.xmlRetorno || (dadosResposta.dados ? dadosResposta.dados.xmlRetorno : null),
+          urlPdf: dadosResposta.urlPdf || (dadosResposta.dados ? dadosResposta.dados.urlPdf : null),
+          urlXml: dadosResposta.urlXml || (dadosResposta.dados ? dadosResposta.dados.urlXml : null)
+        }
       });
     }
 
-    console.log(`\n[${new Date().toISOString()}] 🔍 Consultando status do protocolo: ${protocolo}`);
-
-    // Chama a função existente no adnService
-    const resultado = await consultarProtocolo(protocolo);
-
-    // Retorna a estrutura exata que o Lovable precisa interpretar
-    return res.json({
-      sucesso: true,
-      dados: {
-        numeroNfse: resultado.numeroNfse || null,
-        chaveAcesso: resultado.chaveAcesso || null,
-        xmlRetorno: resultado.xmlRetorno || null,
-        urlPdf: resultado.urlPdf || null,
-        urlXml: resultado.urlXml || null
-      }
+    // Se ainda não foi processada (Fila 210)
+    return res.status(200).json({
+      sucesso: false,
+      status: 'aguardando',
+      mensagem: 'Nota ainda em processamento na fila do governo.',
+      detalhes: dadosResposta.detalhes || dadosResposta.mensagem
     });
 
-  } catch (error: any) {
-    console.error('❌ Erro ao consultar protocolo:', error?.message || error);
-    return res.status(500).json({ 
-      sucesso: false, 
-      erro: error?.message || String(error) 
-    });
+  } catch (erro: any) {
+    console.error('[RAILWAY ERR] Erro na rota de consulta:', erro.message);
+    return res.status(500).json({ sucesso: false, mensagem: erro.message });
   }
 });
 
 const PORT = process.env.PORT || 8080;
-
 app.listen(PORT, () => {
-  console.log(`\n==============================================`);
-  console.log(`🚀 SERVIDOR NFSE-SERVER ATIVO`);
-  console.log(`📡 PORTA: ${PORT}`);
-  console.log(`🔗 REPOSITÓRIO: nillisallan23-jpg/nfse-server`);
-  console.log(`==============================================\n`);
+  console.log(`🚀 Servidor fiscal rodando perfeitamente na porta ${PORT}`);
 });
