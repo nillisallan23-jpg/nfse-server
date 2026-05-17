@@ -141,6 +141,19 @@ export const emitirNotaNacionalFromDados = async (dados: any) => {
         const docToma = String(payload.tomador?.cpfCnpj || '').replace(/\D/g, '');
         const tagDocToma = docToma.length === 11 ? `<CPF>${docToma}</CPF>` : `<CNPJ>${docToma}</CNPJ>`;
 
+        // Captura o código do município enviado
+        let codMunicipio = payload.tomador?.endereco?.codigoMunicipio || '';
+
+        // Se o código vier em branco, faz o mapeamento de contingência para evitar o erro do IBGE
+        if (!codMunicipio) {
+          const cidadeNorm = String(payload.tomador?.endereco?.cidade || '').toLowerCase().trim();
+          if (cidadeNorm.includes('serra')) {
+            codMunicipio = '3205002';
+          } else if (cidadeNorm.includes('vitoria') || cidadeNorm.includes('vitória')) {
+            codMunicipio = '3205309';
+          }
+        }
+
         // XML CORRIGIDO (Tags Curtas + Sem lixo) para evitar Erro 210/203
         const xmlGerado = `<?xml version="1.0" encoding="UTF-8"?>
 <DPS xmlns="http://www.nfse.gov.br/Schema/nfse_v1.00.xsd" versao="1.00">
@@ -156,7 +169,7 @@ export const emitirNotaNacionalFromDados = async (dados: any) => {
         <xLgr>${(payload.tomador?.endereco?.logradouro || '').substring(0, 60)}</xLgr>
         <nro>${payload.tomador?.endereco?.numero || 'SN'}</nro>
         <xBairro>${payload.tomador?.endereco?.bairro || ''}</xBairro>
-        <cMun>${payload.tomador?.endereco?.codigoMunicipio || ''}</cMun>
+        <cMun>${codMunicipio}</cMun>
         <UF>${payload.tomador?.endereco?.uf || ''}</UF>
         <CEP>${String(payload.tomador?.endereco?.cep || '').replace(/\D/g, '')}</CEP>
       </end>
@@ -176,13 +189,48 @@ export const emitirNotaNacionalFromDados = async (dados: any) => {
   }
 };
 
+/**
+ * 🔍 FUNÇÃO: Consulta o status do processamento na API Nacional
+ */
 export const consultarProtocolo = async (protocolo: string) => {
   try {
     const agente = criarAgenteMTLS();
-    const url = `https://certificado.api.via.nfse.gov.br/recepcao/consultar/nfsev/${protocolo}`;
-    const resposta = await axios.get(url, { httpsAgent: agente, headers: { 'Accept': 'application/json' }, timeout: 15000 });
-    return { sucesso: true, dados: resposta.data };
+    // URL oficial do governo para consulta via protocolo
+    const urlBase = process.env.ADN_URL_CONSULTA || 'https://certificado.api.via.nfse.gov.br/recepcao/consultar/nfsev';
+    const url = `${urlBase}/${protocolo}`;
+    
+    console.log(`[ADN] Enviando requisição GET para: ${url}`);
+
+    const resposta = await axios.get(url, { 
+      httpsAgent: agente, 
+      headers: { 'Accept': 'application/json' }, 
+      timeout: 15000 
+    });
+
+    const dadosGov = resposta.data;
+
+    // Normaliza os dados para o padrão que a nossa rota index.ts precisa entregar ao Lovable
+    return {
+      sucesso: true,
+      numeroNfse: dadosGov.numeroNfse || dadosGov.numero || null,
+      chaveAcesso: dadosGov.chaveAcesso || null,
+      xmlRetorno: dadosGov.xml || dadosGov.xmlRetorno || null,
+      urlPdf: dadosGov.urlPdf || null,
+      urlXml: dadosGov.urlXml || null
+    };
+
   } catch (error: any) {
-    return { sucesso: false, detalhes: error.response?.data || error.message };
+    console.error('❌ [ADN] Erro ao consultar protocolo:', error.response?.data || error.message);
+    
+    // Retorna um objeto limpo em caso de falha ou "aguardando"
+    return {
+      sucesso: false,
+      numeroNfse: null,
+      chaveAcesso: null,
+      xmlRetorno: null,
+      urlPdf: null,
+      urlXml: null,
+      detalhes: error.response?.data || error.message
+    };
   }
 };
