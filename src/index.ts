@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import express, { Request, Response } from 'express';
+import express, { Request, Response, RequestHandler } from 'express';
 // Importamos todas as funções necessárias do serviço (incluindo o consultarProtocolo)
 import { 
   emitirNotaNacional, 
@@ -18,7 +18,7 @@ app.use(express.json({ limit: '15mb' }));
 /**
  * 🩺 ROTA DE SAÚDE (HEALTH CHECK)
  */
-app.get('/health', (req: Request, res: Response) => {
+app.get('/health', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
     modelo: 'ADN Nacional (Serpro)',
@@ -31,7 +31,7 @@ app.get('/health', (req: Request, res: Response) => {
 /**
  * 🏠 ROTA RAIZ
  */
-app.get('/', (req: Request, res: Response) => {
+app.get('/', (_req: Request, res: Response) => {
   res.send('🚀 Servidor de Emissão NFS-e Nacional (NFSe-Server) operando!');
 });
 
@@ -39,22 +39,19 @@ app.get('/', (req: Request, res: Response) => {
  * 📄 POST /nfse/emitir
  * Rota inteligente: identifica se você enviou XML ou JSON e processa adequadamente.
  */
-app.post('/nfse/emitir', async (req: Request, res: Response) => {
+const emitirHandler: RequestHandler = async (req, res) => {
   try {
     const payload = req.body;
 
     if (!payload || Object.keys(payload).length === 0) {
-      return res.status(400).json({
+      res.status(400).json({
         sucesso: false,
         mensagem: 'Requisição vazia.'
       });
+      return;
     }
 
     let resultado;
-
-    // 💡 AJUSTE DE FLEXIBILIDADE:
-    // Captura os dados independentemente se a chave é 'xml' ou 'dadosDPS'
-    const dadosParaProcessar = payload.dadosDPS || payload.xml;
 
     // 1. Se enviou uma string de XML (formato antigo ou direto)
     if (payload.xml && typeof payload.xml === 'string') {
@@ -74,35 +71,41 @@ app.post('/nfse/emitir', async (req: Request, res: Response) => {
 
     if (resultado.sucesso) {
       console.log('✅ Processo finalizado com sucesso.');
-      return res.status(200).json(resultado);
+      res.status(200).json(resultado);
+      return;
     } else {
       console.error('⚠️ Falha na operação.');
-      return res.status(422).json(resultado);
+      res.status(422).json(resultado);
+      return;
     }
 
   } catch (error: any) {
-    console.error('❌ Erro crítico no endpoint /emitir:', error.message);
-    return res.status(500).json({
+    console.error('❌ Erro crítico no endpoint /emitir:', error?.message || error);
+    res.status(500).json({
       sucesso: false,
       mensagem: 'Erro interno no servidor.',
-      erro: error.message
+      erro: error?.message || String(error)
     });
+    return;
   }
-});
+};
+
+app.post('/nfse/emitir', emitirHandler);
 
 /**
  * 🔍 POST /nfse/consultar
  * Rota que o Lovable chama para verificar se a prefeitura liberou a nota do protocolo assíncrono.
  */
-app.post('/nfse/consultar', async (req: Request, res: Response) => {
+const consultarHandler: RequestHandler = async (req, res) => {
   try {
     const { protocolo } = req.body;
 
     if (!protocolo) {
-      return res.status(400).json({ 
+      res.status(400).json({ 
         sucesso: false, 
         erro: 'Protocolo é obrigatório.' 
       });
+      return;
     }
 
     console.log(`\n[${new Date().toISOString()}] 🔍 Consultando status do protocolo: ${protocolo}`);
@@ -111,7 +114,7 @@ app.post('/nfse/consultar', async (req: Request, res: Response) => {
     const resultado = await consultarProtocolo(protocolo);
 
     // Retorna a estrutura exata que o Lovable precisa interpretar
-    return res.json({
+    res.json({
       sucesso: true,
       dados: {
         numeroNfse: resultado.numeroNfse || null,
@@ -121,15 +124,19 @@ app.post('/nfse/consultar', async (req: Request, res: Response) => {
         urlXml: resultado.urlXml || null
       }
     });
+    return;
 
   } catch (error: any) {
-    console.error('❌ Erro ao consultar protocolo:', error.message);
-    return res.status(500).json({ 
+    console.error('❌ Erro ao consultar protocolo:', error?.message || error);
+    res.status(500).json({ 
       sucesso: false, 
-      erro: error.message 
+      erro: error?.message || String(error) 
     });
+    return;
   }
-});
+};
+
+app.post('/nfse/consultar', consultarHandler);
 
 const PORT = process.env.PORT || 8080;
 
