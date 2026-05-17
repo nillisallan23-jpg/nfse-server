@@ -6,59 +6,71 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Rota de Saúde do Servidor
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'online', ambiente: process.env.NFSE_AMBIENTE || 'producao' });
+  res.status(200).json({ status: 'online' });
 });
 
 /**
- * 🚀 ROTA: Emissão de Nota
+ * 🚀 ROTA PRINCIPAL: RECEBE DADOS, GERA XML, ASSINA E ENVIA
  */
 app.post('/nfse/emitir', async (req, res) => {
   try {
-    console.log('[RAILWAY REQ] Nova requisição de emissão recebida.');
+    console.log('[RAILWAY] Nova requisição de emissão recebida.');
+
+    // Se o Supabase mandar o formato novo de dados estruturados
+    if (req.body.dadosDPS) {
+      console.log('[RAILWAY] Processando via formato estruturado dadosDPS (Com Assinatura Digital A1).');
+      const resultado = await adnService.emitirNotaNacionalFromDados(req.body.dadosDPS);
+      return res.status(200).json(resultado);
+    } 
     
-    // Usa a função de mapeamento direto que está exposta no adnService
+    // Fallback caso mande o XML direto (formato legado)
+    if (req.body.xml) {
+      console.log('[RAILWAY] Alerta: Recebido formato legado (XML direto). Enviando sem assinatura local.');
+      const resultado = await adnService.emitirNotaNacional(req.body.xml);
+      return res.status(200).json(resultado);
+    }
+
+    // Se mandar o objeto direto sem a propriedade envelopada dadosDPS
+    console.log('[RAILWAY] Processando objeto direto (Com Assinatura Digital A1).');
     const resultado = await adnService.emitirNotaNacionalFromDados(req.body);
     return res.status(200).json(resultado);
+
   } catch (erro: any) {
-    console.error('[RAILWAY ERR] Erro na emissão:', erro.message);
+    console.error('[RAILWAY ERR] Erro crítico na rota /nfse/emitir:', erro.message);
     return res.status(500).json({ sucesso: false, mensagem: erro.message });
   }
 });
 
 /**
- * 🔍 ROTA: Consulta de Protocolo
+ * 🔍 ROTA DE CONSULTA: Burlar travas de tipagem com "as any"
  */
 app.get('/nfse/consultar/:protocolo', async (req, res) => {
   try {
     const { protocolo } = req.params;
-    console.log(`[RAILWAY REQ] Consultando status do protocolo: ${protocolo}`);
+    console.log(`[RAILWAY] Consultando protocolo: ${protocolo}`);
     
     const resultado = await adnService.consultarProtocolo(protocolo);
-    
-    // Tratamento flexível usando "as any" para burlar a trava de tipo do TS no retorno da API
-    const dadosResposta = resultado as any;
+    const respostaComoAny = resultado as any;
 
-    if (dadosResposta.sucesso) {
+    if (respostaComoAny.sucesso) {
       return res.status(200).json({
         sucesso: true,
         dados: {
-          numeroNfse: dadosResposta.numeroNfse || (dadosResposta.dados ? dadosResposta.dados.numeroNfse : null),
-          chaveAcesso: dadosResposta.chaveAcesso || (dadosResposta.dados ? dadosResposta.dados.chaveAcesso : null),
-          xmlRetorno: dadosResposta.xmlRetorno || (dadosResposta.dados ? dadosResposta.dados.xmlRetorno : null),
-          urlPdf: dadosResposta.urlPdf || (dadosResposta.dados ? dadosResposta.dados.urlPdf : null),
-          urlXml: dadosResposta.urlXml || (dadosResposta.dados ? dadosResposta.dados.urlXml : null)
+          numeroNfse: respostaComoAny.numeroNfse || (respostaComoAny.dados ? respostaComoAny.dados.numeroNfse : null),
+          chaveAcesso: respostaComoAny.chaveAcesso || (respostaComoAny.dados ? respostaComoAny.dados.chaveAcesso : null),
+          xmlRetorno: respostaComoAny.xmlRetorno || (respostaComoAny.dados ? respostaComoAny.dados.xmlRetorno : null),
+          urlPdf: respostaComoAny.urlPdf || null,
+          urlXml: respostaComoAny.urlXml || null
         }
       });
     }
 
-    // Se ainda não foi processada (Fila 210)
     return res.status(200).json({
       sucesso: false,
       status: 'aguardando',
-      mensagem: 'Nota ainda em processamento na fila do governo.',
-      detalhes: dadosResposta.detalhes || dadosResposta.mensagem
+      mensagem: 'Nota ainda em processamento na fila.',
+      detalhes: respostaComoAny.detalhes
     });
 
   } catch (erro: any) {
@@ -69,5 +81,5 @@ app.get('/nfse/consultar/:protocolo', async (req, res) => {
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor fiscal rodando perfeitamente na porta ${PORT}`);
+  console.log(`🚀 SERVIDOR NFSE-SERVER ATIVO E ASSINANDO NA PORTA ${PORT}`);
 });
