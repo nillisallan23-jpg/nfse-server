@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import express, { Request, Response, RequestHandler } from 'express';
+import express from 'express';
 // Importamos todas as funções necessárias do serviço (incluindo o consultarProtocolo)
 import { 
   emitirNotaNacional, 
@@ -18,7 +18,7 @@ app.use(express.json({ limit: '15mb' }));
 /**
  * 🩺 ROTA DE SAÚDE (HEALTH CHECK)
  */
-app.get('/health', (_req: Request, res: Response) => {
+app.get('/health', (_req: any, res: any) => {
   res.json({
     status: 'ok',
     modelo: 'ADN Nacional (Serpro)',
@@ -31,7 +31,7 @@ app.get('/health', (_req: Request, res: Response) => {
 /**
  * 🏠 ROTA RAIZ
  */
-app.get('/', (_req: Request, res: Response) => {
+app.get('/', (_req: any, res: any) => {
   res.send('🚀 Servidor de Emissão NFS-e Nacional (NFSe-Server) operando!');
 });
 
@@ -39,16 +39,15 @@ app.get('/', (_req: Request, res: Response) => {
  * 📄 POST /nfse/emitir
  * Rota inteligente: identifica se você enviou XML ou JSON e processa adequadamente.
  */
-const emitirHandler: RequestHandler = async (req, res) => {
+app.post('/nfse/emitir', async (req: any, res: any) => {
   try {
     const payload = req.body;
 
     if (!payload || Object.keys(payload).length === 0) {
-      res.status(400).json({
+      return res.status(400).json({
         sucesso: false,
         mensagem: 'Requisição vazia.'
       });
-      return;
     }
 
     let resultado;
@@ -71,41 +70,35 @@ const emitirHandler: RequestHandler = async (req, res) => {
 
     if (resultado.sucesso) {
       console.log('✅ Processo finalizado com sucesso.');
-      res.status(200).json(resultado);
-      return;
+      return res.status(200).json(resultado);
     } else {
       console.error('⚠️ Falha na operação.');
-      res.status(422).json(resultado);
-      return;
+      return res.status(422).json(resultado);
     }
 
   } catch (error: any) {
     console.error('❌ Erro crítico no endpoint /emitir:', error?.message || error);
-    res.status(500).json({
+    return res.status(500).json({
       sucesso: false,
       mensagem: 'Erro interno no servidor.',
       erro: error?.message || String(error)
     });
-    return;
   }
-};
-
-app.post('/nfse/emitir', emitirHandler);
+});
 
 /**
  * 🔍 POST /nfse/consultar
  * Rota que o Lovable chama para verificar se a prefeitura liberou a nota do protocolo assíncrono.
  */
-const consultarHandler: RequestHandler = async (req, res) => {
+app.post('/nfse/consultar', async (req: any, res: any) => {
   try {
     const { protocolo } = req.body;
 
     if (!protocolo) {
-      res.status(400).json({ 
+      return res.status(400).json({ 
         sucesso: false, 
         erro: 'Protocolo é obrigatório.' 
       });
-      return;
     }
 
     console.log(`\n[${new Date().toISOString()}] 🔍 Consultando status do protocolo: ${protocolo}`);
@@ -114,7 +107,7 @@ const consultarHandler: RequestHandler = async (req, res) => {
     const resultado = await consultarProtocolo(protocolo);
 
     // Retorna a estrutura exata que o Lovable precisa interpretar
-    res.json({
+    return res.json({
       sucesso: true,
       dados: {
         numeroNfse: resultado.numeroNfse || null,
@@ -124,19 +117,15 @@ const consultarHandler: RequestHandler = async (req, res) => {
         urlXml: resultado.urlXml || null
       }
     });
-    return;
 
   } catch (error: any) {
     console.error('❌ Erro ao consultar protocolo:', error?.message || error);
-    res.status(500).json({ 
+    return res.status(500).json({ 
       sucesso: false, 
       erro: error?.message || String(error) 
     });
-    return;
   }
-};
-
-app.post('/nfse/consultar', consultarHandler);
+});
 
 const PORT = process.env.PORT || 8080;
 
