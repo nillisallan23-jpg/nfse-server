@@ -95,3 +95,37 @@ app.listen(PORT, () => {
   console.log(`🔗 REPOSITÓRIO: nillisallan23-jpg/nfse-server`);
   console.log(`==============================================\n`);
 });
+// Certifique-se de que o consultarProtocolo está sendo importado do adnService
+import { emitirNotaNacional, consultarProtocolo } from './services/adnService';
+
+// ... suas outras rotas existentes (como o /nfse/emitir) ...
+
+// Adicione este endpoint para o Lovable consultar o status
+app.post('/nfse/consultar', async (req, res) => {
+  try {
+    const { protocolo } = req.body;
+
+    if (!protocolo) {
+      return res.status(400).json({ sucesso: false, erro: 'Protocolo é obrigatório.' });
+    }
+
+    // Chama a função que já existe no seu adnService
+    const resultado = await consultarProtocolo(protocolo);
+
+    // Retorna a estrutura exata que o Lovable pediu
+    return res.json({
+      sucesso: true,
+      dados: {
+        numeroNfse: resultado.numeroNfse || null,
+        chaveAcesso: resultado.chaveAcesso || null,
+        xmlRetorno: resultado.xmlRetorno || null,
+        urlPdf: resultado.urlPdf || null,
+        urlXml: resultado.urlXml || null
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Erro ao consultar protocolo:', error);
+    return res.status(500).json({ sucesso: false, erro: error.message });
+  }
+});
