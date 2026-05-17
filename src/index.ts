@@ -1,10 +1,19 @@
 import express from 'express';
-import cors from 'cors';
 import * as adnService from './services/adnService';
 
 const app = express();
-app.use(cors());
 app.use(express.json());
+
+// Middleware manual simples para habilitar CORS sem precisar do pacote externo
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'online' });
@@ -50,7 +59,6 @@ app.get('/nfse/consultar/:protocolo', async (req, res) => {
     const { protocolo } = req.params;
     console.log(`[RAILWAY] Consultando protocolo: ${protocolo}`);
     
-    // Forçamos o método como "any" para ignorar travas do TypeScript no build
     const resultado = await (adnService as any).consultarProtocolo(protocolo);
     const respostaComoAny = resultado as any;
 
