@@ -1,3 +1,11 @@
+import 'dotenv/config';
+import axios from 'axios';
+import * as zlib from 'zlib';
+// IMPORTANTE: Certifique-se de que os caminhos abaixo coincidem exatamente com a estrutura de pastas do seu projeto
+import { pfxParaPem } from '../utils/certUtils'; // Altere o caminho se necessário
+import { assinarXmlSHA256 } from '../utils/xmlSignerADN'; // Altere o caminho se necessário
+import { criarAgenteMTLS } from '../utils/mtlsUtils'; // Altere o caminho se necessário
+
 export const emitirNotaNacional = async (xmlPuro: string) => {
   try {
     const pfxPassword = process.env.SENHA_CERT_PFX || '';
@@ -17,7 +25,6 @@ export const emitirNotaNacional = async (xmlPuro: string) => {
     // 2. Executa a assinatura utilizando o xmlSignerADN
     console.log("[RAILWAY - MANUAL] Chamando módulo de assinatura para carimbar o XML...");
     
-    // Certifique-se de que a sua função de assinar está sendo importada corretamente no topo do arquivo
     const xmlAssinado = assinarXmlSHA256(xmlPuro, keyPem, certPem);
 
     // 3. TRAVA CRÍTICA E DEFINITIVA DE SEGURANÇA (PÓS-ASSINATURA)
@@ -57,7 +64,11 @@ export const emitirNotaNacional = async (xmlPuro: string) => {
       timeout: 30000 
     });
 
-    return { sucesso: true, protocolo: resposta.data?.protocolo || resposta.data?.dados?.protocolo, respostaRaw: resposta.data };
+    return { 
+      sucesso: true, 
+      protocolo: resposta.data?.protocolo || resposta.data?.dados?.protocolo, 
+      respostaRaw: resposta.data 
+    };
 
   } catch (error: any) {
     console.error('❌ [RAILWAY CRÍTICO] Erro no fluxo de envio:', error.stack || error.message);
