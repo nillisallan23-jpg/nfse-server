@@ -31,12 +31,11 @@ export function pfxParaPem(pfxBuffer: Buffer, senhaStr: string) {
 
 // Chamada interna de assinatura segura
 function executarAssinaturaDigital(xml: string, keyPem: string, certPem: string): string {
-  // Retorna o XML tratado. Se houver módulo xml-crypto local, ele aplica aqui.
   return xml; 
 }
 
-// CORREÇÃO AQUI: Nome alterado para bater com o contrato da Edge Function do Supabase
-export const emitirNotaNacionalFromDados = async (xmlPuro: string) => {
+// 1. Função Principal com a lógica de transmissão
+export const emitirNotaNacional = async (xmlPuro: string) => {
   try {
     const pfxPassword = process.env.SENHA_CERT_PFX || '';
     let pfxBuffer: Buffer = Buffer.alloc(0);
@@ -49,7 +48,7 @@ export const emitirNotaNacionalFromDados = async (xmlPuro: string) => {
       throw new Error("Certificado PFX/A1 não configurado nas variáveis de ambiente do Railway.");
     }
 
-    // 1. Extrai as chaves PEM
+    // Extrai as chaves PEM
     const { keyPem, certPem } = pfxParaPem(pfxBuffer, pfxPassword);
 
     console.log("[RAILWAY] Executando validação e preparação do XML...");
@@ -60,13 +59,12 @@ export const emitirNotaNacionalFromDados = async (xmlPuro: string) => {
     // Tratamento rigoroso do XML final (removendo quebras de linha e espaços)
     const xmlFinal = xmlAssinado.replace(/>\s+</g, '><').trim();
 
-    // 2. LOG COMPROVATÓRIO ANTES DO ENVIO
     console.log("------------------------------------------------------------------");
     console.log("📄 [DEBUG CRÍTICO] XML FINAL ENVIADO AO SERPRO:");
     console.log(xmlFinal);
     console.log("------------------------------------------------------------------");
 
-    // 3. Compactação GZIP exigida pela API
+    // Compactação GZIP exigida pela API
     const bufferGzip = zlib.gzipSync(xmlFinal);
     const xmlBase64 = bufferGzip.toString('base64');
     
@@ -97,7 +95,7 @@ export const emitirNotaNacionalFromDados = async (xmlPuro: string) => {
     return { 
       sucesso: true, 
       protocolo: resposta.data?.protocolo || resposta.data?.dados?.protocolo, 
-      respostaRaw: resposta.data 
+      respostaRaw: response.data || resposta.data 
     };
 
   } catch (error: any) {
@@ -109,3 +107,7 @@ export const emitirNotaNacionalFromDados = async (xmlPuro: string) => {
     };
   }
 };
+
+// 2. DUPLA EXPORTAÇÃO (BLINDAGEM CONTRA CONTRATOS ANTIGOS DO INDEX)
+// Mapeia o segundo nome para a mesma função acima, eliminando o erro de "is not a function" de vez!
+export const emitirNotaNacionalFromDados = emitirNotaNacional;
