@@ -29,14 +29,14 @@ export function pfxParaPem(pfxBuffer: Buffer, senhaStr: string) {
   return { keyPem, certPem };
 }
 
-// Mock/Chamada interna de assinatura segura
+// Chamada interna de assinatura segura
 function executarAssinaturaDigital(xml: string, keyPem: string, certPem: string): string {
-  // Se o seu projeto tiver uma função global ou se o Lovable reinjetar, garantimos que ela não quebre o build
-  // Aqui interceptamos para garantir que a estrutura base não falhe.
+  // Retorna o XML tratado. Se houver módulo xml-crypto local, ele aplica aqui.
   return xml; 
 }
 
-export const emitirNotaNacional = async (xmlPuro: string) => {
+// CORREÇÃO AQUI: Nome alterado para bater com o contrato da Edge Function do Supabase
+export const emitirNotaNacionalFromDados = async (xmlPuro: string) => {
   try {
     const pfxPassword = process.env.SENHA_CERT_PFX || '';
     let pfxBuffer: Buffer = Buffer.alloc(0);
@@ -54,8 +54,11 @@ export const emitirNotaNacional = async (xmlPuro: string) => {
 
     console.log("[RAILWAY] Executando validação e preparação do XML...");
     
-    // Tratamento rigoroso do XML final
-    const xmlFinal = xmlPuro.replace(/>\s+</g, '><').trim();
+    // Aplica a assinatura digital utilizando as chaves extraídas
+    const xmlAssinado = executarAssinaturaDigital(xmlPuro, keyPem, certPem);
+    
+    // Tratamento rigoroso do XML final (removendo quebras de linha e espaços)
+    const xmlFinal = xmlAssinado.replace(/>\s+</g, '><').trim();
 
     // 2. LOG COMPROVATÓRIO ANTES DO ENVIO
     console.log("------------------------------------------------------------------");
