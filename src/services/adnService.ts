@@ -29,8 +29,8 @@ export function pfxParaPem(pfxBuffer: Buffer, senhaStr: string) {
   return { keyPem, certPem };
 }
 
-// Lógica de envio e assinatura
-export const emitirNotaNacional = async (xmlPuro: string) => {
+// Lógica de envio e assinatura modificada para aceitar JSON ou XML em texto
+export const emitirNotaNacional = async (xmlPuro: any) => {
   try {
     const pfxPassword = process.env.SENHA_CERT_PFX || '';
     let pfxBuffer: Buffer = Buffer.alloc(0);
@@ -43,18 +43,28 @@ export const emitirNotaNacional = async (xmlPuro: string) => {
       throw new Error("Certificado PFX/A1 não configurado nas variáveis de ambiente do Railway.");
     }
 
-    // Extrai as chaves PEM
+    // 1. Extrai as chaves PEM
     const { keyPem, certPem } = pfxParaPem(pfxBuffer, pfxPassword);
+
+    console.log("[RAILWAY] Executando validação e preparação dos dados...");
     
-    // Tratamento e limpeza do XML
-    const xmlFinal = xmlPuro.replace(/>\s+</g, '><').trim();
+    let xmlFinal = "";
 
+    // CORREÇÃO CRÍTICA: Se o dado vier como objeto JSON do Supabase, convertemos em texto para não quebrar o .replace
+    if (typeof xmlPuro === 'string') {
+      xmlFinal = xmlPuro.replace(/>\s+</g, '><').trim();
+    } else {
+      console.log("[RAILWAY] Dados recebidos em formato de objeto. Convertendo payload...");
+      xmlFinal = JSON.stringify(xmlPuro);
+    }
+
+    // 2. LOG COMPROVATÓRIO ANTES DO ENVIO
     console.log("------------------------------------------------------------------");
-    console.log("📄 [DEBUG] XML PRONTO PARA TRANSMISSÃO:");
-    console.log(xmlFinal);
+    console.log("📄 [DEBUG] CONTEÚDO ENVIADO AO SERPRO:");
+    console.log(xmlFinal.substring(0, 300) + "...");
     console.log("------------------------------------------------------------------");
 
-    // Compactação GZIP exigida pelo SERPRO
+    // 3. Compactação GZIP exigida pela API
     const bufferGzip = zlib.gzipSync(xmlFinal);
     const xmlBase64 = bufferGzip.toString('base64');
     
@@ -67,9 +77,8 @@ export const emitirNotaNacional = async (xmlPuro: string) => {
       XmlGzipBase64: xmlBase64
     };
 
-    console.log(`🚀 [SERPRO] Enviando lote para: ${url}`);
+    console.log(`🚀 [SERPRO] Disparando requisição POST para: ${url}`);
     
-    // Agente mTLS dinâmico com certificado A1
     const agente = new https.Agent({
       key: keyPem,
       cert: certPem,
@@ -98,16 +107,5 @@ export const emitirNotaNacional = async (xmlPuro: string) => {
   }
 };
 
-// -------------------------------------------------------------------------
-// BLINDAGEM ABSOLUTA DE INTEGRAÇÃO (Para evitar erros com o index.ts)
-// -------------------------------------------------------------------------
-
-// 1. Exportação nomeada idêntica à que o Supabase está procurando
+// Dupla exportação para manter a compatibilidade com as rotas
 export const emitirNotaNacionalFromDados = emitirNotaNacional;
-
-// 2. Exportação Padrão (Default) contendo os dois nomes (Se o index importar via Objeto Global)
-const adnService = {
-  emitirNotaNacional,
-  emitirNotaNacionalFromDados
-};
-export default adnService;
