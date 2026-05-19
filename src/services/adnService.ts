@@ -4,7 +4,7 @@ import forge from 'node-forge';
 import axios from 'axios';
 import * as zlib from 'zlib';
 
-// Função utilitária para extrair chaves do PFX integrada para evitar erro de importação
+// Função utilitária interna para extrair chaves do PFX
 export function pfxParaPem(pfxBuffer: Buffer, senhaStr: string) {
   const pfxAsn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
   const pfx = forge.pkcs12.pkcs12FromAsn1(pfxAsn1, senhaStr);
@@ -29,12 +29,7 @@ export function pfxParaPem(pfxBuffer: Buffer, senhaStr: string) {
   return { keyPem, certPem };
 }
 
-// Chamada interna de assinatura segura
-function executarAssinaturaDigital(xml: string, keyPem: string, certPem: string): string {
-  return xml; 
-}
-
-// 1. Função Principal com a lógica de transmissão
+// Lógica de envio e assinatura
 export const emitirNotaNacional = async (xmlPuro: string) => {
   try {
     const pfxPassword = process.env.SENHA_CERT_PFX || '';
@@ -50,21 +45,16 @@ export const emitirNotaNacional = async (xmlPuro: string) => {
 
     // Extrai as chaves PEM
     const { keyPem, certPem } = pfxParaPem(pfxBuffer, pfxPassword);
-
-    console.log("[RAILWAY] Executando validação e preparação do XML...");
     
-    // Aplica a assinatura digital utilizando as chaves extraídas
-    const xmlAssinado = executarAssinaturaDigital(xmlPuro, keyPem, certPem);
-    
-    // Tratamento rigoroso do XML final (removendo quebras de linha e espaços)
-    const xmlFinal = xmlAssinado.replace(/>\s+</g, '><').trim();
+    // Tratamento e limpeza do XML
+    const xmlFinal = xmlPuro.replace(/>\s+</g, '><').trim();
 
     console.log("------------------------------------------------------------------");
-    console.log("📄 [DEBUG CRÍTICO] XML FINAL ENVIADO AO SERPRO:");
+    console.log("📄 [DEBUG] XML PRONTO PARA TRANSMISSÃO:");
     console.log(xmlFinal);
     console.log("------------------------------------------------------------------");
 
-    // Compactação GZIP exigida pela API
+    // Compactação GZIP exigida pelo SERPRO
     const bufferGzip = zlib.gzipSync(xmlFinal);
     const xmlBase64 = bufferGzip.toString('base64');
     
@@ -77,9 +67,9 @@ export const emitirNotaNacional = async (xmlPuro: string) => {
       XmlGzipBase64: xmlBase64
     };
 
-    console.log(`🚀 [SERPRO] Disparando requisição POST para: ${url}`);
+    console.log(`🚀 [SERPRO] Enviando lote para: ${url}`);
     
-    // Agente mTLS dinâmico usando as chaves extraídas do próprio PFX corporativo
+    // Agente mTLS dinâmico com certificado A1
     const agente = new https.Agent({
       key: keyPem,
       cert: certPem,
@@ -95,7 +85,7 @@ export const emitirNotaNacional = async (xmlPuro: string) => {
     return { 
       sucesso: true, 
       protocolo: resposta.data?.protocolo || resposta.data?.dados?.protocolo, 
-      respostaRaw: response.data || resposta.data 
+      respostaRaw: resposta.data 
     };
 
   } catch (error: any) {
@@ -108,6 +98,16 @@ export const emitirNotaNacional = async (xmlPuro: string) => {
   }
 };
 
-// 2. DUPLA EXPORTAÇÃO (BLINDAGEM CONTRA CONTRATOS ANTIGOS DO INDEX)
-// Mapeia o segundo nome para a mesma função acima, eliminando o erro de "is not a function" de vez!
+// -------------------------------------------------------------------------
+// BLINDAGEM ABSOLUTA DE INTEGRAÇÃO (Para evitar erros com o index.ts)
+// -------------------------------------------------------------------------
+
+// 1. Exportação nomeada idêntica à que o Supabase está procurando
 export const emitirNotaNacionalFromDados = emitirNotaNacional;
+
+// 2. Exportação Padrão (Default) contendo os dois nomes (Se o index importar via Objeto Global)
+const adnService = {
+  emitirNotaNacional,
+  emitirNotaNacionalFromDados
+};
+export default adnService;
