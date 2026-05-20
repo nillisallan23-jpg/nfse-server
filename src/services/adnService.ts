@@ -2,11 +2,12 @@ import fs from 'fs';
 import https from 'https';
 import forge from 'node-forge';
 import axios from 'axios';
-import * as zlib from 'zlib';
 
+// CORREÇÃO: Função pfxParaPem agora usa a conversão correta de bytes do forge
 export function pfxParaPem(pfxBuffer: Buffer, senhaStr: string) {
+  // Transforma o buffer em uma string de bytes que o forge entende nativamente
   const pfxAsn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
-  const pfx = forge.pkcs12.pkcs12FromAsn1(pfxAsn1, senhaStr);
+  const pfx = forge.pkcs12.pkcs12FromAsn1(pfxAsn1, false, senhaStr);
   
   let keyPem = '';
   let certPem = '';
@@ -28,10 +29,25 @@ export function pfxParaPem(pfxBuffer: Buffer, senhaStr: string) {
   return { keyPem, certPem };
 }
 
+// CORREÇÃO: Gerando uma assinatura real (Simplificada para a estrutura que você montou)
 function executarAssinaturaDigital(xml: string, keyPem: string, certPem: string): string {
   if (!xml.includes('<DPS')) return xml;
+  
   const dadosCertLimpo = certPem.replace(/-----\s*BEGIN CERTIFICATE\s*-----|-----\s*END CERTIFICATE\s*-----|[\r\n]/g, "");
-  const blocoSignature = `<Signature xmlns="http://www.w3.org/2000/09/xmldsig#"><SignedInfo><SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><Reference URI=""><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/></Transforms><DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><DigestValue>Simulado_Digest==</DigestValue></Reference></SignedInfo><SignatureValue>Simulado_Value==</SignatureValue><KeyInfo><X509Data><X509Certificate>${dadosCertLimpo}</X509Certificate></X509Data></KeyInfo></Signature>`;
+  
+  // Para produção, use uma lib como 'xml-crypto'. Abaixo geramos o hash real do XML para o Digest
+  const md = forge.md.sha256.create();
+  md.update(xml, 'utf8');
+  const digestReal = forge.util.encode64(md.digest().getBytes());
+
+  // Assinando a Tag SignedInfo de forma real com a Chave Privada
+  const privateKey = forge.pki.privateKeyFromPem(keyPem);
+  const mdSign = forge.md.sha256.create();
+  mdSign.update(`<SignedInfo><SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><Reference URI=""><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/></Transforms><DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><DigestValue>${digestReal}</DigestValue></Reference></SignedInfo>`, 'utf8');
+  const assinaturaReal = forge.util.encode64(privateKey.sign(mdSign));
+
+  const blocoSignature = `<Signature xmlns="http://www.w3.org/2000/09/xmldsig#"><SignedInfo><SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><Reference URI=""><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/></Transforms><DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><DigestValue>${digestReal}</DigestValue></Reference></SignedInfo><SignatureValue>${assinaturaReal}</SignatureValue><KeyInfo><X509Data><X509Certificate>${dadosCertLimpo}</X509Certificate></X509Data></KeyInfo></Signature>`;
+  
   return xml.replace('</DPS>', `${blocoSignature}</DPS>`);
 }
 
@@ -50,7 +66,6 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
 
     const { keyPem, certPem } = pfxParaPem(pfxBuffer, pfxPassword);
 
-    // Tratamento ultra-flexível do corpo recebido
     let xmlBruto = "";
     if (typeof payloadRecebido === 'string') {
       xmlBruto = payloadRecebido;
@@ -59,10 +74,10 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     } else if (payloadRecebido && typeof payloadRecebido.body === 'string') {
       xmlBruto = payloadRecebido.body;
     } else {
-      xmlBruto = JSON.stringify(payloadRecebido);
+      // CORREÇÃO: Evita que envie JSON bruto caso o objeto venha incorreto
+      throw new Error("O payload recebido não contém um XML válido.");
     }
 
-    // Limpeza preventiva de tags e espaços
     const xmlAssinado = executarAssinaturaDigital(xmlBruto, keyPem, certPem);
     const xmlFinal = xmlAssinado.replace(/>\s+</g, '><').trim();
 
