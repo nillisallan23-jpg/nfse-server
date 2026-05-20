@@ -3,11 +3,11 @@ import * as adnService from './services/adnService';
 
 const app = express();
 
-// Configuração de interpretadores de requisição (Middlewares)
-app.use(express.json()); // Lê JSON normalmente
-app.use(express.text({ type: ['application/xml', 'text/xml'], limit: '10mb' })); // CRUCIAL: Lê XML puro do Lovable como string
+// CORREÇÃO: Invertemos a ordem e adicionamos um fallback para capturar texto/xml de forma segura
+app.use(express.text({ type: ['application/xml', 'text/xml', 'text/plain'], limit: '10mb' })); 
+app.use(express.json({ limit: '10mb' })); 
 
-// Middleware manual simples para habilitar CORS sem precisar do pacote externo
+// Middleware manual para habilitar CORS
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
@@ -29,37 +29,10 @@ app.post('/nfse/emitir', async (req, res) => {
   try {
     console.log('[RAILWAY] Nova requisição de emissão recebida.');
 
-    // 1. Caso o Lovable envie o XML puro diretamente no corpo como String
-    if (typeof req.body === 'string' && req.body.includes('<?xml')) {
-      console.log('[RAILWAY] Identificado envio de XML puro via texto. Processando e assinando...');
-      const resultado = await adnService.emitirNotaNacional(req.body);
-      return res.status(200).json(resultado);
-    }
-
-    // 2. Fallback caso envie envelopado em JSON { xmlString: "..." }
-    if (req.body && req.body.xmlString) {
-      console.log('[RAILWAY] Processando propriedade xmlString recebida dentro do JSON...');
-      const resultado = await adnService.emitirNotaNacional(req.body.xmlString);
-      return res.status(200).json(resultado);
-    }
-
-    // 3. Fallback caso o Supabase mande o formato antigo de dados estruturados dadosDPS
-    if (req.body && req.body.dadosDPS) {
-      console.log('[RAILWAY] Processando via formato estruturado dadosDPS (Com Assinatura Digital A1).');
-      const resultado = await (adnService as any).emitirNotaNacionalFromDados(req.body.dadosDPS);
-      return res.status(200).json(resultado);
-    } 
+    // CORREÇÃO: Simplificado. Como o adnService já trata se o payload é string, 
+    // objeto, xmlString ou body, passamos o req.body direto de forma limpa.
+    const resultado = await adnService.emitirNotaNacional(req.body);
     
-    // 4. Fallback caso mande a propriedade antiga .xml
-    if (req.body && req.body.xml) {
-      console.log('[RAILWAY] Alerta: Recebido formato legado (propriedade .xml).');
-      const resultado = await adnService.emitirNotaNacional(req.body.xml);
-      return res.status(200).json(resultado);
-    }
-
-    // 5. Se mandar o objeto direto sem a propriedade envelopada dadosDPS
-    console.log('[RAILWAY] Processando objeto direto como fallback.');
-    const resultado = await (adnService as any).emitirNotaNacionalFromDados(req.body);
     return res.status(200).json(resultado);
 
   } catch (erro: any) {
@@ -69,13 +42,18 @@ app.post('/nfse/emitir', async (req, res) => {
 });
 
 /**
- * 🔍 ROTA DE CONSULTA: Blindada contra erros de compilação
+ * 🔍 ROTA DE CONSULTA
  */
 app.get('/nfse/consultar/:protocolo', async (req, res) => {
   try {
     const { protocolo } = req.params;
     console.log(`[RAILWAY] Consultando protocolo: ${protocolo}`);
     
+    // ALERTA: Certifique-se de implementar e exportar esta função dentro do seu './services/adnService'
+    if (typeof (adnService as any).consultarProtocolo !== 'function') {
+      throw new Error("A função 'consultarProtocolo' ainda não foi implementada no adnService.");
+    }
+
     const resultado = await (adnService as any).consultarProtocolo(protocolo);
     const respostaComoAny = resultado as any;
 
