@@ -50,24 +50,23 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
 
     const { keyPem, certPem } = pfxParaPem(pfxBuffer, pfxPassword);
 
-    // Extrai o texto do XML enviado pelo Supabase
+    // Tratamento ultra-flexível do corpo recebido
     let xmlBruto = "";
     if (typeof payloadRecebido === 'string') {
       xmlBruto = payloadRecebido;
     } else if (payloadRecebido && payloadRecebido.xmlString) {
       xmlBruto = payloadRecebido.xmlString;
+    } else if (payloadRecebido && typeof payloadRecebido.body === 'string') {
+      xmlBruto = payloadRecebido.body;
     } else {
-      throw new Error("O corpo da requisição não contém uma string XML válida.");
+      xmlBruto = JSON.stringify(payloadRecebido);
     }
 
-    // Aplica a assinatura obrigatória exigida pelo passo 2
+    // Limpeza preventiva de tags e espaços
     const xmlAssinado = executarAssinaturaDigital(xmlBruto, keyPem, certPem);
     const xmlFinal = xmlAssinado.replace(/>\s+</g, '><').trim();
 
-    console.log("------------------------------------------------------------------");
-    console.log("📄 [RAILWAY] TRANSMITINDO XML PURO DIRETAMENTE:");
-    console.log(xmlFinal.substring(0, 200) + "...");
-    console.log("------------------------------------------------------------------");
+    console.log("📄 [SERPRO] transmitindo XML Puro formatado...");
 
     const url = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
     
@@ -77,7 +76,6 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       rejectUnauthorized: false
     });
 
-    // PASSO 1 CORRIGIDO: Enviamos o texto do XML puro direto no body, mudando o Header para application/xml
     const resposta = await axios.post(url, xmlFinal, {
       httpsAgent: agente,
       headers: { 
@@ -95,10 +93,10 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     };
 
   } catch (error: any) {
-    console.error('❌ [RAILWAY] Erro na transmissão do XML:', error.message);
+    console.error('❌ [ADN SERVICE ERR]:', error.message);
     return { 
       sucesso: false, 
-      mensagem: "Falha na validação ou envio do XML puro.", 
+      mensagem: "Falha no processamento do lote do XML.", 
       erros: [error.message] 
     };
   }
