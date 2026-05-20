@@ -2,7 +2,10 @@ import express from 'express';
 import * as adnService from './services/adnService';
 
 const app = express();
-app.use(express.json());
+
+// Configuração de interpretadores de requisição (Middlewares)
+app.use(express.json()); // Lê JSON normalmente
+app.use(express.text({ type: ['application/xml', 'text/xml'], limit: '10mb' })); // CRUCIAL: Lê XML puro do Lovable como string
 
 // Middleware manual simples para habilitar CORS sem precisar do pacote externo
 app.use((req, res, next) => {
@@ -20,28 +23,42 @@ app.get('/health', (req, res) => {
 });
 
 /**
- * 🚀 ROTA PRINCIPAL: RECEBE DADOS, GERA XML, ASSINA E ENVIA
+ * 🚀 ROTA PRINCIPAL: RECEBE XML PURO OU DADOS, ASSINA E ENVIA
  */
 app.post('/nfse/emitir', async (req, res) => {
   try {
     console.log('[RAILWAY] Nova requisição de emissão recebida.');
 
-    // Se o Supabase mandar o formato novo de dados estruturados
-    if (req.body.dadosDPS) {
+    // 1. Caso o Lovable envie o XML puro diretamente no corpo como String
+    if (typeof req.body === 'string' && req.body.includes('<?xml')) {
+      console.log('[RAILWAY] Identificado envio de XML puro via texto. Processando e assinando...');
+      const resultado = await adnService.emitirNotaNacional(req.body);
+      return res.status(200).json(resultado);
+    }
+
+    // 2. Fallback caso envie envelopado em JSON { xmlString: "..." }
+    if (req.body && req.body.xmlString) {
+      console.log('[RAILWAY] Processando propriedade xmlString recebida dentro do JSON...');
+      const resultado = await adnService.emitirNotaNacional(req.body.xmlString);
+      return res.status(200).json(resultado);
+    }
+
+    // 3. Fallback caso o Supabase mande o formato antigo de dados estruturados dadosDPS
+    if (req.body && req.body.dadosDPS) {
       console.log('[RAILWAY] Processando via formato estruturado dadosDPS (Com Assinatura Digital A1).');
       const resultado = await (adnService as any).emitirNotaNacionalFromDados(req.body.dadosDPS);
       return res.status(200).json(resultado);
     } 
     
-    // Fallback caso mande o XML direto (formato legado)
-    if (req.body.xml) {
-      console.log('[RAILWAY] Alerta: Recebido formato legado (XML direto). Enviando sem assinatura local.');
+    // 4. Fallback caso mande a propriedade antiga .xml
+    if (req.body && req.body.xml) {
+      console.log('[RAILWAY] Alerta: Recebido formato legado (propriedade .xml).');
       const resultado = await adnService.emitirNotaNacional(req.body.xml);
       return res.status(200).json(resultado);
     }
 
-    // Se mandar o objeto direto sem a propriedade envelopada dadosDPS
-    console.log('[RAILWAY] Processando objeto direto (Com Assinatura Digital A1).');
+    // 5. Se mandar o objeto direto sem a propriedade envelopada dadosDPS
+    console.log('[RAILWAY] Processando objeto direto como fallback.');
     const resultado = await (adnService as any).emitirNotaNacionalFromDados(req.body);
     return res.status(200).json(resultado);
 
