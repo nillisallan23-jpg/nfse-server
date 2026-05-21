@@ -43,10 +43,10 @@ function ejecutarAssinaturaDigital(xml: string, keyPem: string, certPem: string)
   // Assinando a Tag SignedInfo de forma real com a Chave Privada
   const privateKey = forge.pki.privateKeyFromPem(keyPem);
   const mdSign = forge.md.sha256.create();
-  mdSign.update(`<SignedInfo><SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><Reference URI=""><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/></Transforms><DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><DigestValue>${digestReal}</DigestValue></Reference></SignedInfo>`, 'utf8');
+  mdSign.update(`<SignedInfo><SignatureMethod Algorithm="http://w3.org"/><Reference URI=""><Transforms><Transform Algorithm="http://w3.org"/></Transforms><DigestMethod Algorithm="http://w3.org"/><DigestValue>${digestReal}</DigestValue></Reference></SignedInfo>`, 'utf8');
   const assinaturaReal = forge.util.encode64(privateKey.sign(mdSign));
 
-  const blocoSignature = `<Signature xmlns="http://www.w3.org/2000/09/xmldsig#"><SignedInfo><SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><Reference URI=""><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/></Transforms><DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><DigestValue>${digestReal}</DigestValue></Reference></SignedInfo><SignatureValue>${assinaturaReal}</SignatureValue><KeyInfo><X509Data><X509Certificate>${dadosCertLimpo}</X509Certificate></X509Data></KeyInfo></Signature>`;
+  const blocoSignature = `<Signature xmlns="http://w3.org"><SignedInfo><SignatureMethod Algorithm="http://w3.org"/><Reference URI=""><Transforms><Transform Algorithm="http://w3.org"/></Transforms><DigestMethod Algorithm="http://w3.org"/><DigestValue>${digestReal}</DigestValue></Reference></SignedInfo><SignatureValue>${assinaturaReal}</SignatureValue><KeyInfo><X509Data><X509Certificate>${dadosCertLimpo}</X509Certificate></X509Data></KeyInfo></Signature>`;
   
   return xml.replace('</DPS>', `${blocoSignature}</DPS>`);
 }
@@ -77,16 +77,15 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       throw new Error("O payload recebido não contém um XML válido.");
     }
 
-    const xmlAssinado = ejecutarAssinaturaDigital(xmlBruto, keyPem, certPem);
-    
-    // FORÇA A LIMPEZA TOTAL DE ESPAÇOS E TRATAMENTO RIGOROSO DA STRING
-    const xmlTextoPuro = String(xmlAssinado).replace(/>\s+</g, '><').trim();
+    // ATUALIZAÇÃO SEGURA: Limpa os espaços e quebras antes da assinatura ser gerada
+    const xmlLimpoParaAssinar = xmlBruto.replace(/>\s+</g, '><').trim();
+    const xmlTextoPuro = ejecutarAssinaturaDigital(xmlLimpoParaAssinar, keyPem, certPem);
 
     console.log("📄 [SERPRO] Transmitindo XML Puro formatado com Charset definido...");
     // LOG DE MONITORAMENTO: Essencial para conferir o que sai no console do Railway
     console.log("🔍 [DEBUG] Início do XML final:", xmlTextoPuro.substring(0, 120));
 
-    const url = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
+    const url = process.env.ADN_URL_EMISSAO || 'https://nfse.gov.br';
     
     const agente = new https.Agent({
       key: keyPem,
