@@ -87,43 +87,43 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       throw new Error("O payload recebido não contém um XML válido.");
     }
 
-    // 1. Limpa e Assina o XML da DPS enviado pelo Lovable/Supabase
     const xmlLimpoParaAssinar = xmlBruto.replace(/>\s+</g, '><').trim();
     const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpoParaAssinar, keyPem, certPem);
 
-    // 2. 💎 ESTRATÉGIA CRUCIAL: Envelopamento SOAP 1.2 exigido pelo SERPRO/ADN
-    // O seu XML assinado entra de forma pura dentro da tag de requisição correspondente
-    const soapEnvelope = 
-`<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
-  <soap12:Body>
-    <EnviarLoteRpsEnvio xmlns="http://www.nfse.gov.br/Schema/nfse_v1.00.xsd">
+    // 💎 ENVELOPAMENTO SOAP 1.1 PADRÃO (Utiliza o namespace clássico da W3 schemas-xmlsoap)
+    const soapEnvelope11 = 
+`<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:nfse="http://www.nfse.gov.br/Schema/nfse_v1.00.xsd">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <nfse:EnviarLoteRpsEnvio>
       ${xmlAssinado.replace('<?xml version="1.0" encoding="UTF-8"?>', '')}
-    </EnviarLoteRpsEnvio>
-  </soap12:Body>
-</soap12:Envelope>`;
+    </nfse:EnviarLoteRpsEnvio>
+  </soapenv:Body>
+</soapenv:Envelope>`;
 
-    console.log("📄 [SERPRO] Transmitindo Lote via Envelope SOAP 1.2...");
-    console.log("🔍 [DEBUG] Amostra do Payload SOAP de Saída:", soapEnvelope.substring(0, 200));
+    console.log("📄 [SERPRO] Transmitindo via Nova Estrutura SOAP 1.1 (text/xml)...");
+    console.log("🔍 [DEBUG] Início do Payload SOAP 1.1:", soapEnvelope11.substring(0, 220));
 
     const urlEmissao = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
     const tokenValido = String(process.env.ADN_TOKEN || '').trim();
 
-    // Alteração de Content-Type para o padrão aceito por Web Services Governamentais SOAP
+    // Headers ajustados cirurgicamente para quebrar o bloqueio 415
     const opcoesRequisicao: https.RequestOptions = {
       method: 'POST',
       key: keyPem,
       cert: certPem,
       rejectUnauthorized: false,
       headers: {
-        'Content-Type': 'application/soap+xml; charset=utf-8',
-        'Accept': 'application/soap+xml, application/xml, text/xml',
+        'Content-Type': 'text/xml; charset=utf-8', // Mudança crucial de media-type
+        'Accept': 'text/xml, application/xml',
         'Authorization': `Bearer ${tokenValido}`,
-        'Content-Length': Buffer.byteLength(soapEnvelope, 'utf8'),
+        'SOAPAction': 'http://www.nfse.gov.br/Schema/nfse_v1.00.xsd/EnviarLoteRps', // Exigido pelo protocolo SOAP 1.1
+        'Content-Length': Buffer.byteLength(soapEnvelope11, 'utf8'),
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) WebServNFSe/1.0'
       }
     };
 
-    const resposta = await dispararRequisicaoNativaHttps(urlEmissao, soapEnvelope, opcoesRequisicao);
+    const resposta = await dispararRequisicaoNativaHttps(urlEmissao, soapEnvelope11, opcoesRequisicao);
 
     if (resposta.status >= 200 && resposta.status < 300) {
       return { 
