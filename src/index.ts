@@ -3,11 +3,42 @@ import * as adnService from './services/adnService';
 
 const app = express();
 
-// CORREÇÃO: Invertemos a ordem e adicionamos um fallback para capturar texto/xml de forma segura
-app.use(express.text({ type: ['application/xml', 'text/xml', 'text/plain'], limit: '10mb' })); 
-app.use(express.json({ limit: '10mb' })); 
+/**
+ * 🛡️ MIDDLEWARE AVANÇADO DE CAPTURA BRUTA (ANTI-ERRO 415 NA ENTRADA)
+ * Intercepta os streams de dados puros do Supabase antes que o body-parser automático
+ * do Express avalie os cabeçalhos de Content-Type e cause uma rejeição de mídia.
+ */
+app.use((req, res, next) => {
+  if (req.url === '/nfse/emitir' && req.method === 'POST') {
+    const chunks: Buffer[] = [];
+    
+    req.on('data', (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
+    
+    req.on('end', () => {
+      const bufferCompleto = Buffer.concat(chunks);
+      // Converte o payload interceptado em string UTF-8 limpa
+      req.body = bufferCompleto.toString('utf8'); 
+      next();
+    });
 
-// Middleware manual para habilitar CORS
+    req.on('error', (err) => {
+      console.error('[RAILWAY STRM ERR] Erro ao ler stream da requisição:', err.message);
+      res.status(400).json({ sucesso: false, mensagem: 'Erro na leitura dos dados brutos.' });
+    });
+  } else {
+    next();
+  }
+});
+
+// Fallbacks de decodificação normais para as demais rotas do servidor
+app.use(express.json({ limit: '10mb' })); 
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+/**
+ * 🔒 CONFIGURAÇÃO DE CORS PROFISSIONAL
+ */
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
@@ -18,19 +49,21 @@ app.use((req, res, next) => {
   next();
 });
 
+/**
+ * 💓 ROTA DE MONITORAMENTO (HEALTH CHECK)
+ */
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'online' });
 });
 
 /**
- * 🚀 ROTA PRINCIPAL: RECEBE XML PURO OU DADOS, ASSINA E ENVIA
+ * 🚀 ROTA PRINCIPAL: RECEBE O XML INTERCEPTADO, EFETUA A ASSINATURA E TRANSMITE
  */
 app.post('/nfse/emitir', async (req, res) => {
   try {
-    console.log('[RAILWAY] Nova requisição de emissão recebida.');
+    console.log('[RAILWAY] Nova requisição de emissão recebida com sucesso.');
 
-    // CORREÇÃO: Simplificado. Como o adnService já trata se o payload é string, 
-    // objeto, xmlString ou body, passamos o req.body direto de forma limpa.
+    // O adnService agora receberá a string limpa injetada de forma isolada pelo stream middleware
     const resultado = await adnService.emitirNotaNacional(req.body);
     
     return res.status(200).json(resultado);
@@ -49,7 +82,6 @@ app.get('/nfse/consultar/:protocolo', async (req, res) => {
     const { protocolo } = req.params;
     console.log(`[RAILWAY] Consultando protocolo: ${protocolo}`);
     
-    // ALERTA: Certifique-se de implementar e exportar esta função dentro do seu './services/adnService'
     if (typeof (adnService as any).consultarProtocolo !== 'function') {
       throw new Error("A função 'consultarProtocolo' ainda não foi implementada no adnService.");
     }
