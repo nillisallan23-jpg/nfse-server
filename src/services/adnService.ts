@@ -78,11 +78,13 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     }
 
     const xmlAssinado = ejecutarAssinaturaDigital(xmlBruto, keyPem, certPem);
-    const xmlFinal = xmlAssinado.replace(/>\s+</g, '><').trim();
+    
+    // FORÇA A LIMPEZA TOTAL DE ESPAÇOS E TRATAMENTO RIGOROSO DA STRING
+    const xmlTextoPuro = String(xmlAssinado).replace(/>\s+</g, '><').trim();
 
     console.log("📄 [SERPRO] Transmitindo XML Puro formatado com Charset definido...");
-    // LOG DE MONITORAMENTO: Mostra o começo do que está sendo enviado para garantir que é XML puro
-    console.log("🔍 [DEBUG] Início do XML final:", String(xmlFinal).substring(0, 120));
+    // LOG DE MONITORAMENTO: Essencial para conferir o que sai no console do Railway
+    console.log("🔍 [DEBUG] Início do XML final:", xmlTextoPuro.substring(0, 120));
 
     const url = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
     
@@ -92,16 +94,18 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       rejectUnauthorized: false
     });
 
-    // BLOCO ATUALIZADO: Forçando o Axios a tratar o payload estritamente como String de Texto Puro
-    const resposta = await axios.post(url, String(xmlFinal), {
+    // CONFIGURAÇÃO AVANÇADA BLINDADA ANTI-ERRO 415
+    const resposta = await axios.post(url, xmlTextoPuro, {
       httpsAgent: agente,
       headers: { 
-        'Content-Type': 'application/xml; charset=utf-8',
-        'Accept': 'application/xml',
+        'content-type': 'application/xml;charset=utf-8', // Chaves minúsculas e sem espaço após ponto-e-vírgula
+        'accept': 'application/xml',
         'Authorization': `Bearer ${process.env.ADN_TOKEN || ''}`
       },
-      // Impede que o Axios intercepte e converta o dado para objeto/JSON por debaixo dos panos
+      // Trava de segurança: Impede o Axios de serializar ou modificar o texto puro
       transformRequest: [(data) => data],
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
       timeout: 30000 
     });
 
