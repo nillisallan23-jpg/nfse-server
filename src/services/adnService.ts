@@ -74,7 +74,6 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     } else if (payloadRecebido && typeof payloadRecebido.body === 'string') {
       xmlBruto = payloadRecebido.body;
     } else {
-      // CORREÇÃO: Evita que envie JSON bruto caso o objeto venha incorreto
       throw new Error("O payload recebido não contém um XML válido.");
     }
 
@@ -82,6 +81,8 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     const xmlFinal = xmlAssinado.replace(/>\s+</g, '><').trim();
 
     console.log("📄 [SERPRO] Transmitindo XML Puro formatado com Charset definido...");
+    // LOG DE MONITORAMENTO: Mostra o começo do que está sendo enviado para garantir que é XML puro
+    console.log("🔍 [DEBUG] Início do XML final:", String(xmlFinal).substring(0, 120));
 
     const url = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
     
@@ -91,14 +92,16 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       rejectUnauthorized: false
     });
 
-    // CORREÇÃO ESSENCIAL: Content-Type atualizado com charset=utf-8 para derrubar o erro 415
-    const resposta = await axios.post(url, xmlFinal, {
+    // BLOCO ATUALIZADO: Forçando o Axios a tratar o payload estritamente como String de Texto Puro
+    const resposta = await axios.post(url, String(xmlFinal), {
       httpsAgent: agente,
       headers: { 
         'Content-Type': 'application/xml; charset=utf-8',
         'Accept': 'application/xml',
         'Authorization': `Bearer ${process.env.ADN_TOKEN || ''}`
       },
+      // Impede que o Axios intercepte e converta o dado para objeto/JSON por debaixo dos panos
+      transformRequest: [(data) => data],
       timeout: 30000 
     });
 
@@ -109,7 +112,6 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     };
 
   } catch (error: any) {
-    // Melhoria de Log: Captura a resposta exata do erro da API do SERPRO caso o Axios falhe
     if (error.response) {
       console.error(`❌ [ADN SERVICE ERR]: Falha na requisição. Status: ${error.response.status}`);
       console.error('❌ [ADN SERVICE ERR DETALHES]:', error.response.data);
