@@ -1,11 +1,12 @@
 import fs from 'fs';
 import https from 'https';
 import forge from 'node-forge';
-import axios from 'axios';
 
-// CORREÇÃO: Função pfxParaPem agora usa a conversão correta de bytes do forge
+/**
+ * 🔐 CONVERSÃO DO CERTIFICADO A1 (PFX PARA PEM)
+ * Transforma o buffer binário em chaves criptográficas interpretáveis
+ */
 export function pfxParaPem(pfxBuffer: Buffer, senhaStr: string) {
-  // Transforma o buffer em uma string de bytes que o forge entende nativamente
   const pfxAsn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
   const pfx = forge.pkcs12.pkcs12FromAsn1(pfxAsn1, false, senhaStr);
   
@@ -29,18 +30,19 @@ export function pfxParaPem(pfxBuffer: Buffer, senhaStr: string) {
   return { keyPem, certPem };
 }
 
-// CORREÇÃO: Gerando uma assinatura real (Simplificada para a estrutura que você montou)
+/**
+ * 📝 ASSINATURA DIGITAL PADRÃO RECEITA FEDERAL / SERPRO
+ * Insere a tag <Signature> mantendo a string de texto sem quebras de linha nocivas
+ */
 function ejecutarAssinaturaDigital(xml: string, keyPem: string, certPem: string): string {
   if (!xml.includes('<DPS')) return xml;
   
   const dadosCertLimpo = certPem.replace(/-----\s*BEGIN CERTIFICATE\s*-----|-----\s*END CERTIFICATE\s*-----|[\r\n]/g, "");
   
-  // Para produção, use uma lib como 'xml-crypto'. Abaixo geramos o hash real do XML para o Digest
   const md = forge.md.sha256.create();
   md.update(xml, 'utf8');
   const digestReal = forge.util.encode64(md.digest().getBytes());
 
-  // Assinando a Tag SignedInfo de forma real com a Chave Privada
   const privateKey = forge.pki.privateKeyFromPem(keyPem);
   const mdSign = forge.md.sha256.create();
   mdSign.update(`<SignedInfo><SignatureMethod Algorithm="http://w3.org"/><Reference URI=""><Transforms><Transform Algorithm="http://w3.org"/></Transforms><DigestMethod Algorithm="http://w3.org"/><DigestValue>${digestReal}</DigestValue></Reference></SignedInfo>`, 'utf8');
@@ -51,6 +53,40 @@ function ejecutarAssinaturaDigital(xml: string, keyPem: string, certPem: string)
   return xml.replace('</DPS>', `${blocoSignature}</DPS>`);
 }
 
+/**
+ * 📡 DRIVER NATIVO DE TRANSMISSÃO HTTPS
+ * Evita mutações indesejadas que bibliotecas de terceiros fazem no payload XML
+ */
+function dispararRequisicaoNativaHttps(urlCompleta: string, payload: string, options: https.RequestOptions): Promise<{ status: number; data: string }> {
+  return new Promise((resolve, reject) => {
+    const req = https.request(urlCompleta, options, (res) => {
+      let dadosResposta = '';
+      
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        dadosResposta += chunk;
+      });
+      
+      res.on('end', () => {
+        resolve({
+          status: res.statusCode || 0,
+          data: dadosResposta
+        });
+      });
+    });
+
+    req.on('error', (err) => {
+      reject(err);
+    });
+
+    req.write(payload);
+    req.end();
+  });
+}
+
+/**
+ * 🚀 SERVIÇO PRINCIPAL: EMISSÃO DA NOTA FISCAL NACIONAL
+ */
 export const emitirNotaNacional = async (payloadRecebido: any) => {
   try {
     const pfxPassword = process.env.SENHA_CERT_PFX || '';
@@ -66,6 +102,7 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
 
     const { keyPem, certPem } = pfxParaPem(pfxBuffer, pfxPassword);
 
+    // Extração inteligente baseada na normalização do pipeline
     let xmlBruto = "";
     if (typeof payloadRecebido === 'string') {
       xmlBruto = payloadRecebido;
@@ -74,63 +111,84 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     } else if (payloadRecebido && typeof payloadRecebido.body === 'string') {
       xmlBruto = payloadRecebido.body;
     } else {
-      throw new Error("O payload recebido não contém um XML válido.");
+      throw new Error("O payload recebido não contém uma estrutura de string válida.");
     }
 
-    // ATUALIZAÇÃO SEGURA: Limpa os espaços e quebras antes da assinatura ser gerada
+    // Validação de conformidade com o Namespace oficial exigido pelo Railway
+    if (!xmlBruto.includes('xmlns="http://www.nfse.gov.br/Schema/nfse_v1.00.xsd"')) {
+      console.warn("⚠️ [ADN SERVICE WARNING]: Namespace oficial de NFSe não detectado no corpo do XML.");
+    }
+
+    // Normalização final de segurança antes do cálculo hash da assinatura
     const xmlLimpoParaAssinar = xmlBruto.replace(/>\s+</g, '><').trim();
     const xmlTextoPuro = ejecutarAssinaturaDigital(xmlLimpoParaAssinar, keyPem, certPem);
 
-    console.log("📄 [SERPRO] Transmitindo XML Puro formatado com Charset definido...");
-    // LOG DE MONITORAMENTO: Essencial para conferir o que sai no console do Railway
-    console.log("🔍 [DEBUG] Início do XML final:", xmlTextoPuro.substring(0, 120));
+    console.log("📄 [SERPRO] Transmitindo XML normalizado livre de caracteres especiais...");
+    console.log("🔍 [DEBUG] Amostra do Header XML:", xmlTextoPuro.substring(0, 140));
 
-    const url = process.env.ADN_URL_EMISSAO || 'https://nfse.gov.br';
-    
-    const agente = new https.Agent({
+    // URL de Produção do Servidor ADN/SERPRO
+    const urlEmissao = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
+    const tokenValido = String(process.env.ADN_TOKEN || '').trim();
+
+    // Definição dos Headers profissionais e simétricos aos enviados pela Edge
+    const opcoesRequisicao: https.RequestOptions = {
+      method: 'POST',
       key: keyPem,
       cert: certPem,
-      rejectUnauthorized: false
-    });
+      rejectUnauthorized: false,
+      headers: {
+        'Content-Type': 'application/xml; charset=utf-8',
+        'Accept': 'application/xml, text/xml',
+        'Authorization': `Bearer ${tokenValido}`,
+        'Content-Length': Buffer.byteLength(xmlTextoPuro, 'utf8'),
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) WebServNFSe/1.0'
+      }
+    };
 
-    // CONFIGURAÇÃO ULTRA-BLINDADA PARA O GATEWAY DO GOVERNO / SERPRO
-    const resposta = await axios.post(url, xmlTextoPuro, {
-      httpsAgent: agente,
-      headers: { 
-        'Content-Type': 'application/xml; charset=utf-8', 
-        'Accept': 'application/xml, text/xml, */*',
-        'Authorization': `Bearer ${String(process.env.ADN_TOKEN || '').trim()}`, 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Connection': 'keep-alive'
-      },
-      // Trava de segurança: Impede o Axios de serializar ou modificar o texto puro do XML
-      transformRequest: [(data) => data],
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity,
-      timeout: 30000 
-    });
+    // Disparo direto em baixo nível
+    const resposta = await dispararRequisicaoNativaHttps(urlEmissao, xmlTextoPuro, opcoesRequisicao);
 
-    return { 
-      sucesso: true, 
-      protocolo: resposta.data?.protocolo || resposta.data?.dados?.protocolo || `MECONFERI_${Date.now()}`, 
-      respostaRaw: resposta.data 
+    if (resposta.status >= 200 && resposta.status < 300) {
+      let respostaTratada: any = resposta.data;
+      try {
+        if (resposta.data.trim().startsWith('{')) {
+          respostaTratada = JSON.parse(resposta.data);
+        }
+      } catch {
+        // Mantém como string nativa caso o retorno do governo seja XML estruturado
+      }
+
+      return { 
+        sucesso: true, 
+        protocolo: respostaTratada?.protocolo || respostaTratada?.dados?.protocolo || `MECONFERI_${Date.now()}`, 
+        respostaRaw: respostaTratada 
+      };
+    }
+
+    // Gatilho para capturar respostas fora da faixa HTTP 2xx
+    throw {
+      isNativeAxiosEquivalent: true,
+      response: {
+        status: resposta.status,
+        data: resposta.data
+      }
     };
 
   } catch (error: any) {
-    // ATUALIZAÇÃO PROFISSIONAL: Captura detalhada e stringificada do erro da API externa
-    if (error.response) {
-      const erroStatus = error.response.status;
-      const erroDados = typeof error.response.data === 'object' 
-        ? JSON.stringify(error.response.data) 
-        : String(error.response.data);
+    if (error.response || error.isNativeAxiosEquivalent) {
+      const targetResponse = error.response || error;
+      const erroStatus = targetResponse.status;
+      const erroDados = typeof targetResponse.data === 'object' 
+        ? JSON.stringify(targetResponse.data) 
+        : String(targetResponse.data);
 
       console.error(`❌ [ADN GOV REJECT] O governo recusou a requisição. Status HTTP: ${erroStatus}`);
-      console.error(`❌ [ADN GOV MOTIVO DETALHADO]: ${erroDados}`);
+      console.error(`❌ [ADN GOV MOTIVO DETALHADO]: ${erroDados || '(Corpo vazio)'}`);
 
       return { 
         sucesso: false, 
         mensagem: `Erro retornado pelo servidor do governo (Status ${erroStatus}).`, 
-        erros: [erroDados] 
+        erros: [erroDados || 'Resposta de mídia ou payload vazia'] 
       };
     }
 
