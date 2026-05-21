@@ -93,15 +93,17 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       rejectUnauthorized: false
     });
 
-    // CONFIGURAÇÃO AVANÇADA BLINDADA ANTI-ERRO 415
+    // CONFIGURAÇÃO ULTRA-BLINDADA PARA O GATEWAY DO GOVERNO / SERPRO
     const resposta = await axios.post(url, xmlTextoPuro, {
       httpsAgent: agente,
       headers: { 
-        'content-type': 'application/xml;charset=utf-8', // Chaves minúsculas e sem espaço após ponto-e-vírgula
-        'accept': 'application/xml',
-        'Authorization': `Bearer ${process.env.ADN_TOKEN || ''}`
+        'Content-Type': 'application/xml; charset=utf-8', 
+        'Accept': 'application/xml, text/xml, */*',
+        'Authorization': `Bearer ${String(process.env.ADN_TOKEN || '').trim()}`, 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Connection': 'keep-alive'
       },
-      // Trava de segurança: Impede o Axios de serializar ou modificar o texto puro
+      // Trava de segurança: Impede o Axios de serializar ou modificar o texto puro do XML
       transformRequest: [(data) => data],
       maxContentLength: Infinity,
       maxBodyLength: Infinity,
