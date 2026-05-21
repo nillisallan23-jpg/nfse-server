@@ -30,7 +30,7 @@ export function pfxParaPem(pfxBuffer: Buffer, senhaStr: string) {
 }
 
 // CORREÇÃO: Gerando uma assinatura real (Simplificada para a estrutura que você montou)
-function executarAssinaturaDigital(xml: string, keyPem: string, certPem: string): string {
+function ejecutarAssinaturaDigital(xml: string, keyPem: string, certPem: string): string {
   if (!xml.includes('<DPS')) return xml;
   
   const dadosCertLimpo = certPem.replace(/-----\s*BEGIN CERTIFICATE\s*-----|-----\s*END CERTIFICATE\s*-----|[\r\n]/g, "");
@@ -78,10 +78,10 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       throw new Error("O payload recebido não contém um XML válido.");
     }
 
-    const xmlAssinado = executarAssinaturaDigital(xmlBruto, keyPem, certPem);
+    const xmlAssinado = ejecutarAssinaturaDigital(xmlBruto, keyPem, certPem);
     const xmlFinal = xmlAssinado.replace(/>\s+</g, '><').trim();
 
-    console.log("📄 [SERPRO] transmitindo XML Puro formatado...");
+    console.log("📄 [SERPRO] Transmitindo XML Puro formatado com Charset definido...");
 
     const url = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
     
@@ -91,10 +91,11 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       rejectUnauthorized: false
     });
 
+    // CORREÇÃO ESSENCIAL: Content-Type atualizado com charset=utf-8 para derrubar o erro 415
     const resposta = await axios.post(url, xmlFinal, {
       httpsAgent: agente,
       headers: { 
-        'Content-Type': 'application/xml',
+        'Content-Type': 'application/xml; charset=utf-8',
         'Accept': 'application/xml',
         'Authorization': `Bearer ${process.env.ADN_TOKEN || ''}`
       },
@@ -108,6 +109,17 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     };
 
   } catch (error: any) {
+    // Melhoria de Log: Captura a resposta exata do erro da API do SERPRO caso o Axios falhe
+    if (error.response) {
+      console.error(`❌ [ADN SERVICE ERR]: Falha na requisição. Status: ${error.response.status}`);
+      console.error('❌ [ADN SERVICE ERR DETALHES]:', error.response.data);
+      return { 
+        sucesso: false, 
+        mensagem: `Erro retornado pelo servidor (Status ${error.response.status}).`, 
+        erros: [JSON.stringify(error.response.data)] 
+      };
+    }
+
     console.error('❌ [ADN SERVICE ERR]:', error.message);
     return { 
       sucesso: false, 
