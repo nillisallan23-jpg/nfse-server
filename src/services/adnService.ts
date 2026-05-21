@@ -115,17 +115,24 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     };
 
   } catch (error: any) {
+    // ATUALIZAÇÃO PROFISSIONAL: Captura detalhada e stringificada do erro da API externa
     if (error.response) {
-      console.error(`❌ [ADN SERVICE ERR]: Falha na requisição. Status: ${error.response.status}`);
-      console.error('❌ [ADN SERVICE ERR DETALHES]:', error.response.data);
+      const erroStatus = error.response.status;
+      const erroDados = typeof error.response.data === 'object' 
+        ? JSON.stringify(error.response.data) 
+        : String(error.response.data);
+
+      console.error(`❌ [ADN GOV REJECT] O governo recusou a requisição. Status HTTP: ${erroStatus}`);
+      console.error(`❌ [ADN GOV MOTIVO DETALHADO]: ${erroDados}`);
+
       return { 
         sucesso: false, 
-        mensagem: `Erro retornado pelo servidor (Status ${error.response.status}).`, 
-        erros: [JSON.stringify(error.response.data)] 
+        mensagem: `Erro retornado pelo servidor do governo (Status ${erroStatus}).`, 
+        erros: [erroDados] 
       };
     }
 
-    console.error('❌ [ADN SERVICE ERR]:', error.message);
+    console.error('❌ [ADN SERVICE CRITICAL ERR]:', error.message);
     return { 
       sucesso: false, 
       mensagem: "Falha no processamento do lote do XML.", 
