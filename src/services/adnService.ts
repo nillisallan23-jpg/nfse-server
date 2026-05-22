@@ -1,6 +1,7 @@
 import fs from 'fs';
 import https from 'https';
 import forge from 'node-forge';
+import axios from 'axios';
 
 export function pfxParaPem(pfxBuffer: Buffer, senhaStr: string) {
   const pfxAsn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
@@ -45,22 +46,6 @@ function ejecutarAssinaturaDigital(xml: string, keyPem: string, certPem: string)
   return xml.replace('</DPS>', `${blocoSignature}</DPS>`);
 }
 
-function dispararRequisicaoNativaHttps(urlCompleta: string, payload: string, options: https.RequestOptions): Promise<{ status: number; data: string }> {
-  return new Promise((resolve, reject) => {
-    const req = https.request(urlCompleta, options, (res) => {
-      let dadosResposta = '';
-      res.setEncoding('utf8');
-      res.on('data', (chunk) => { dadosResposta += chunk; });
-      res.on('end', () => {
-        resolve({ status: res.statusCode || 0, data: dadosResposta });
-      });
-    });
-    req.on('error', (err) => { reject(err); });
-    req.write(payload);
-    req.end();
-  });
-}
-
 export const emitirNotaNacional = async (payloadRecebido: any) => {
   try {
     const pfxPassword = process.env.SENHA_CERT_PFX || '';
@@ -87,74 +72,61 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       throw new Error("O payload recebido não contém um XML válido.");
     }
 
+    // 1. Minifica e executa a assinatura digital ICP-Brasil do XML
     const xmlLimpoParaAssinar = xmlBruto.replace(/>\s+</g, '><').trim();
     const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpoParaAssinar, keyPem, certPem);
 
-    // 💎 ENVELOPAMENTO SOAP 1.1 PADRÃO (Utiliza o namespace clássico da W3 schemas-xmlsoap)
-    const soapEnvelope11 = 
-`<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:nfse="http://www.nfse.gov.br/Schema/nfse_v1.00.xsd">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <nfse:EnviarLoteRpsEnvio>
-      ${xmlAssinado.replace('<?xml version="1.0" encoding="UTF-8"?>', '')}
-    </nfse:EnviarLoteRpsEnvio>
-  </soapenv:Body>
-</soapenv:Envelope>`;
+    // 2. 💎 CONVERSÃO BASE64 PARA O PADRÃO REST DO ADN
+    const xmlBase64 = Buffer.from(xmlAssinado, 'utf8').toString('base64');
+    
+    // Objeto JSON estrito mapeado de acordo com a API do SERPRO
+    const jsonBody = {
+      xml: xmlBase64
+    };
 
-    console.log("📄 [SERPRO] Transmitindo via Nova Estrutura SOAP 1.1 (text/xml)...");
-    console.log("🔍 [DEBUG] Início do Payload SOAP 1.1:", soapEnvelope11.substring(0, 220));
+    console.log("📄 [SERPRO] Enviando payload convertido em JSON com XML em string Base64...");
 
     const urlEmissao = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
     const tokenValido = String(process.env.ADN_TOKEN || '').trim();
 
-    // Headers ajustados cirurgicamente para quebrar o bloqueio 415
-    const opcoesRequisicao: https.RequestOptions = {
-      method: 'POST',
+    // Configuração mTLS com chaves do certificado digital do hotel
+    const agenteHttps = new https.Agent({
       key: keyPem,
       cert: certPem,
-      rejectUnauthorized: false,
+      rejectUnauthorized: false
+    });
+
+    // 3. Comunicação via Axios com cabeçalhos cirúrgicos
+    const resposta = await axios.post(urlEmissao, jsonBody, {
+      httpsAgent: agenteHttps,
       headers: {
-        'Content-Type': 'text/xml; charset=utf-8', // Mudança crucial de media-type
-        'Accept': 'text/xml, application/xml',
+        'Content-Type': 'application/json; charset=utf-8',
+        'Accept': 'application/json',
         'Authorization': `Bearer ${tokenValido}`,
-        'SOAPAction': 'http://www.nfse.gov.br/Schema/nfse_v1.00.xsd/EnviarLoteRps', // Exigido pelo protocolo SOAP 1.1
-        'Content-Length': Buffer.byteLength(soapEnvelope11, 'utf8'),
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) WebServNFSe/1.0'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ServidorNFSe/1.0'
       }
-    };
+    });
 
-    const resposta = await dispararRequisicaoNativaHttps(urlEmissao, soapEnvelope11, opcoesRequisicao);
-
-    if (resposta.status >= 200 && resposta.status < 300) {
-      return { 
-        sucesso: true, 
-        respostaRaw: resposta.data 
-      };
-    }
-
-    throw {
-      isNativeAxiosEquivalent: true,
-      response: {
-        status: resposta.status,
-        data: resposta.data
-      }
+    return { 
+      sucesso: true, 
+      protocolo: resposta.data?.protocolo || resposta.data?.dados?.protocolo || `ADN_${Date.now()}`,
+      respostaRaw: resposta.data 
     };
 
   } catch (error: any) {
-    if (error.response || error.isNativeAxiosEquivalent) {
-      const targetResponse = error.response || error;
-      const erroStatus = targetResponse.status;
-      const erroDados = typeof targetResponse.data === 'object' 
-        ? JSON.stringify(targetResponse.data) 
-        : String(targetResponse.data);
+    if (error.response) {
+      const erroStatus = error.response.status;
+      const erroDados = typeof error.response.data === 'object' 
+        ? JSON.stringify(error.response.data) 
+        : String(error.response.data);
 
       console.error(`❌ [ADN GOV REJECT] O governo recusou a requisição. Status HTTP: ${erroStatus}`);
-      console.error(`❌ [ADN GOV MOTIVO DETALHADO]: ${erroDados || '(Corpo vazio)'}`);
+      console.error(`❌ [ADN GOV MOTIVO DETALHADO]: ${erroDados}`);
 
       return { 
         sucesso: false, 
         mensagem: `Erro retornado pelo servidor do governo (Status ${erroStatus}).`, 
-        erros: [erroDados || 'Resposta de mídia vazia'] 
+        erros: [erroDados] 
       };
     }
 
