@@ -76,15 +76,30 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     const xmlLimpoParaAssinar = xmlBruto.replace(/>\s+</g, '><').trim();
     const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpoParaAssinar, keyPem, certPem);
 
-    // 2. 💎 CONVERSÃO BASE64 PARA O PADRÃO REST DO ADN
+    // =========================================================================
+    // 💥 PARTE CENTRAL: CAPTURA DINÂMICA E MONTAGEM DO PAYLOAD (ATUALIZADO)
+    // =========================================================================
+    
+    // Captura o CNPJ de dentro das tags <CNPJ> do XML gerado
+    const cnpjMatch = xmlAssinado.match(/<CNPJ>(.*?)<\/CNPJ>/i);
+    const cnpjEmissor = cnpjMatch && cnpjMatch[1] ? cnpjMatch[1].replace(/\D/g, '') : '';
+    
+    // Captura o Id da DPS para usar como Identificador único da transmissão
+    const idMatch = xmlAssinado.match(/Id="DPS(.*?)"/i) || xmlAssinado.match(/Id="(.*?)"/i);
+    const idRequisicao = idMatch && idMatch[1] ? idMatch[1] : `REQ${Date.now()}`;
+
+    // Converte o XML assinado em string Base64 contínua
     const xmlBase64 = Buffer.from(xmlAssinado, 'utf8').toString('base64');
     
-    // Objeto JSON estrito mapeado de acordo com a API do SERPRO
+    // Montagem do JSON estrito exigido pelo validador .NET do SERPRO
     const jsonBody = {
+      identificador: idRequisicao,
+      cnpjConcessionaria: cnpjEmissor || process.env.CNPJ_EMISSOR || '', 
       xml: xmlBase64
     };
 
-    console.log("📄 [SERPRO] Enviando payload convertido em JSON com XML em string Base64...");
+    console.log(`📄 [SERPRO] Transmitindo JSON. ID: ${jsonBody.identificador} | CNPJ: ${jsonBody.cnpjConcessionaria}`);
+    // =========================================================================
 
     const urlEmissao = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
     const tokenValido = String(process.env.ADN_TOKEN || '').trim();
@@ -96,7 +111,7 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       rejectUnauthorized: false
     });
 
-    // 3. Comunicação via Axios com cabeçalhos cirúrgicos
+    // 3. Comunicação via Axios direcionada ao barramento RESTful do governo
     const resposta = await axios.post(urlEmissao, jsonBody, {
       httpsAgent: agenteHttps,
       headers: {
