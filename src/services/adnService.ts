@@ -211,14 +211,14 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       throw new Error("O payload recebido não contém um XML válido.");
     }
 
-    // 1. Minifica e executa a assinatura digital ICP-Brasil do XML
-    const xmlLimpoParaAssinar = xmlBruto.replace(/>\s+</g, '><').trim();
+    // 1. Limpa quebras de linha/espaços ocultos e assina digitalmente
+    const xmlLimpoParaAssinar = xmlBruto.replace(/[\r\n]/g, '').replace(/>\s+</g, '><').trim();
     const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpoParaAssinar, keyPem, certPem);
 
-    // 2. Tenta buscar o token dinamicamente (avança sem travar caso falhe)
+    // 2. Tenta buscar o token dinamicamente (avança sem travar caso dê 404)
     const tokenValido = await obterBearerTokenADN(keyPem, certPem);
 
-    // 3. Define a URL correta de recepção do XML Puro
+    // 3. Define a URL de recepção do XML Puro
     const urlEmissao = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
 
     console.log(`📄 [SERPRO] Transmitindo XML Puro (${xmlAssinado.length} caracteres) via Handshake mTLS...`);
@@ -229,22 +229,22 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       rejectUnauthorized: false
     });
 
-    // 4. Configuração adaptativa de Headers
+    // 4. Configuração estrita de headers para mitigar o erro 415 (Unsupported Media Type)
     const headersConfig: any = {
       'Content-Type': 'application/xml; charset=utf-8',
+      'Accept': '*/*', // Força o servidor a aceitar responder independente do tipo de mídia (JSON ou XML)
       'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
     };
 
-    // Se um token válido foi extraído, anexa-o. Caso contrário, confia apenas nas chaves mTLS
     if (tokenValido) {
       headersConfig['Authorization'] = `Bearer ${tokenValido}`;
     }
 
-    // 5. Transmissão da string limpa do XML para o servidor do governo
+    // 5. Envio forçado como string crua pura
     const resposta = await axios.post(urlEmissao, xmlAssinado, {
       httpsAgent: agenteHttps,
       headers: headersConfig,
-      transformRequest: [(data) => data] // Trava o Axios para prevenir parseamento incorreto de string externa
+      transformRequest: [(data) => String(data)] // Evita que o Axios mude o content-type por baixo dos panos
     });
 
     const protocolo = resposta.data?.protocolo || resposta.data?.dados?.protocolo || `ADN_${Date.now()}`;
