@@ -2,6 +2,10 @@ import fs from 'fs';
 import https from 'https';
 import forge from 'node-forge';
 import axios from 'axios';
+import querystring from 'querystring';
+
+// Cache em memória para reaproveitar o Bearer Token dentro do tempo de validade
+let tokenCache = { token: null as string | null, expiresAt: 0 };
 
 export function pfxParaPem(pfxBuffer: Buffer, senhaStr: string) {
   const pfxAsn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
@@ -46,6 +50,126 @@ function ejecutarAssinaturaDigital(xml: string, keyPem: string, certPem: string)
   return xml.replace('</DPS>', `${blocoSignature}</DPS>`);
 }
 
+/**
+ * 🔒 SOLICITA O BEARER TOKEN DINÂMICO VIA mTLS (OAUTH2)
+ */
+async function obterBearerTokenADN(keyPem: string, certPem: string): Promise<string> {
+  const agora = Date.now();
+  
+  // Se houver um token válido em cache por mais de 5 minutos, reutiliza
+  if (tokenCache.token && tokenCache.expiresAt > agora + 300000) {
+    return tokenCache.token;
+  }
+
+  const agenteHttps = new https.Agent({
+    key: keyPem,
+    cert: certPem,
+    rejectUnauthorized: false
+  });
+
+  const urlToken = process.env.ADN_URL_TOKEN || 'https://certificado.api.via.nfse.gov.br/conectar/token';
+
+  const bodyCampos = querystring.stringify({
+    grant_type: process.env.ADN_GRANT_TYPE || 'client_credentials',
+    scope: process.env.ADN_SCOPE || 'nfse:emissao'
+  });
+
+  console.log('🔑 [SERPRO] Solicitando novo Bearer Token via mTLS...');
+  
+  const respostaAuth = await axios.post(urlToken, bodyCampos, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    httpsAgent: agenteHttps
+  });
+
+  if (respostaAuth.data?.access_token) {
+    tokenCache = {
+      token: respostaAuth.data.access_token,
+      expiresAt: agora + (respostaAuth.data.expires_in * 1000)
+    };
+    return respostaAuth.data.access_token;
+  }
+
+  throw new Error("Não foi possível gerar o Bearer Token dinâmico com o SERPRO.");
+}
+
+/**
+ * 🔍 NOVA FUNÇÃO IMPLEMENTADA: CONSULTA STATUS REAL DO PROTOCOLO
+ */
+export const consultarProtocolo = async (protocolo: string): Promise<any> => {
+  try {
+    // 1. Recupera as credenciais do certificado para fazer o handshake mTLS
+    const pfxPassword = process.env.SENHA_CERT_PFX || '';
+    let pfxBuffer: Buffer = Buffer.alloc(0);
+
+    if (process.env.CERT_PFX_BASE64) {
+      pfxBuffer = Buffer.from(process.env.CERT_PFX_BASE64, 'base64');
+    }
+
+    if (pfxBuffer.length === 0) {
+      throw new Error("Certificado PFX/A1 ausente no ambiente para consulta.");
+    }
+
+    const { keyPem, certPem } = pfxParaPem(pfxBuffer, pfxPassword);
+    
+    // 2. Garante que temos um Bearer Token válido ativo
+    const tokenValido = await obterBearerTokenADN(keyPem, certPem);
+
+    const baseConsultaUrl = process.env.ADN_URL_EMISSAO 
+      ? process.env.ADN_URL_EMISSAO.replace('/recepcao/nfsev', '') 
+      : 'https://certificado.api.via.nfse.gov.br';
+      
+    const urlConsultaCompleta = `${baseConsultaUrl}/consultar/${protocolo}`;
+
+    const agenteHttps = new https.Agent({
+      key: keyPem,
+      cert: certPem,
+      rejectUnauthorized: false
+    });
+
+    console.log(`🔍 [SERPRO] Consultando status do protocolo: ${protocolo}`);
+
+    const resposta = await axios.get(urlConsultaCompleta, {
+      httpsAgent: agenteHttps,
+      headers: {
+        'Authorization': `Bearer ${tokenValido}`,
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
+      }
+    });
+
+    // Se o governo retornar dados válidos da nota processada
+    if (resposta.data) {
+      return {
+        sucesso: true,
+        codigoRetorno: 200,
+        numeroNfse: resposta.data.numeroNfse || resposta.data.dados?.numeroNfse || null,
+        chaveAcesso: resposta.data.chaveAcesso || resposta.data.dados?.chaveAcesso || null,
+        xmlRetorno: resposta.data.xmlRetorno || resposta.data.dados?.xmlRetorno || null,
+        urlPdf: resposta.data.urlPdf || resposta.data.dados?.urlPdf || null,
+        urlXml: resposta.data.urlXml || resposta.data.dados?.urlXml || null,
+        dadosRaw: resposta.data
+      };
+    }
+
+    return resposta.data;
+
+  } catch (error: any) {
+    if (error.response) {
+      console.error(`❌ [ADN CONSULTA REJECT] O governo negou a consulta. HTTP ${error.response.status}`);
+      return { 
+        sucesso: false, 
+        mensagem: "Erro na resposta da consulta do barramento.", 
+        detalhes: error.response.data 
+      };
+    }
+    console.error('❌ [ADN CONSULTA CRITICAL ERR]:', error.message);
+    throw error;
+  }
+};
+
+/**
+ * 🚀 TRANSMISSÃO EM XML PURO E COMPATÍVEL COM O CONTRATO NACIONAL
+ */
 export const emitirNotaNacional = async (payloadRecebido: any) => {
   try {
     const pfxPassword = process.env.SENHA_CERT_PFX || '';
@@ -76,55 +200,36 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     const xmlLimpoParaAssinar = xmlBruto.replace(/>\s+</g, '><').trim();
     const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpoParaAssinar, keyPem, certPem);
 
-    // =========================================================================
-    // 💥 PARTE CENTRAL: CAPTURA DINÂMICA E MONTAGEM DO PAYLOAD (ATUALIZADO)
-    // =========================================================================
-    
-    // Captura o CNPJ de dentro das tags <CNPJ> do XML gerado
-    const cnpjMatch = xmlAssinado.match(/<CNPJ>(.*?)<\/CNPJ>/i);
-    const cnpjEmissor = cnpjMatch && cnpjMatch[1] ? cnpjMatch[1].replace(/\D/g, '') : '';
-    
-    // Captura o Id da DPS para usar como Identificador único da transmissão
-    const idMatch = xmlAssinado.match(/Id="DPS(.*?)"/i) || xmlAssinado.match(/Id="(.*?)"/i);
-    const idRequisicao = idMatch && idMatch[1] ? idMatch[1] : `REQ${Date.now()}`;
+    // 2. Busca o token de autorização dinamicamente por mTLS
+    const tokenValido = await obterBearerTokenADN(keyPem, certPem);
 
-    // Converte o XML assinado em string Base64 contínua
-    const xmlBase64 = Buffer.from(xmlAssinado, 'utf8').toString('base64');
-    
-    // Montagem do JSON estrito exigido pelo validador .NET do SERPRO
-    const jsonBody = {
-      identificador: idRequisicao,
-      cnpjConcessionaria: cnpjEmissor || process.env.CNPJ_EMISSOR || '', 
-      xml: xmlBase64
-    };
-
-    console.log(`📄 [SERPRO] Transmitindo JSON. ID: ${jsonBody.identificador} | CNPJ: ${jsonBody.cnpjConcessionaria}`);
-    // =========================================================================
+    // 3. LOG REFORMULADO - Indica o uso do padrão correto
+    console.log(`📄 [SERPRO] Transmitindo XML Puro com Bearer Token...`);
 
     const urlEmissao = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
-    const tokenValido = String(process.env.ADN_TOKEN || '').trim();
 
-    // Configuração mTLS com chaves do certificado digital do hotel
     const agenteHttps = new https.Agent({
       key: keyPem,
       cert: certPem,
       rejectUnauthorized: false
     });
 
-    // 3. Comunicação via Axios direcionada ao barramento RESTful do governo
-    const resposta = await axios.post(urlEmissao, jsonBody, {
+    // 4. Envia o XML cru no corpo da requisição sem envelopamento JSON
+    const resposta = await axios.post(urlEmissao, xmlAssinado, {
       httpsAgent: agenteHttps,
       headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Accept': 'application/json',
+        'Content-Type': 'application/xml; charset=utf-8',
         'Authorization': `Bearer ${tokenValido}`,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ServidorNFSe/1.0'
-      }
+        'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
+      },
+      transformRequest: [(data) => data] // 💡 Impede o Axios de converter ou corromper a string XML
     });
+
+    const protocolo = resposta.data?.protocolo || resposta.data?.dados?.protocolo || `ADN_${Date.now()}`;
 
     return { 
       sucesso: true, 
-      protocolo: resposta.data?.protocolo || resposta.data?.dados?.protocolo || `ADN_${Date.now()}`,
+      protocolo: protocolo,
       respostaRaw: resposta.data 
     };
 
@@ -148,7 +253,7 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     console.error('❌ [ADN SERVICE CRITICAL ERR]:', error.message);
     return { 
       sucesso: false, 
-      mensagem: "Falha no processamento do lote do XML.", 
+      mensagem: "Falha no envio ou processamento do lote XML.", 
       erros: [error.message] 
     };
   }
