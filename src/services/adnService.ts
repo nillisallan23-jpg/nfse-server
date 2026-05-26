@@ -52,13 +52,21 @@ function ejecutarAssinaturaDigital(xml: string, keyPem: string, certPem: string)
 
 /**
  * 🔒 SOLICITA O BEARER TOKEN DINÂMICO VIA mTLS (OAUTH2)
+ * Se falhar ou der 404 (comum em produção), resolve como null e deixa o fluxo seguir via mTLS direto.
  */
-async function obterBearerTokenADN(keyPem: string, certPem: string): Promise<string> {
+async function obterBearerTokenADN(keyPem: string, certPem: string): Promise<string | null> {
   const agora = Date.now();
   
   // Se houver um token válido em cache por mais de 5 minutos, reutiliza
   if (tokenCache.token && tokenCache.expiresAt > agora + 300000) {
     return tokenCache.token;
+  }
+
+  const urlToken = process.env.ADN_URL_TOKEN || 'https://certificado.api.via.nfse.gov.br/conectar/token';
+  
+  // Se não houver URL de token explícita ou estivermos assumindo autenticação mTLS pura direta
+  if (urlToken.toLowerCase() === 'direto' || urlToken.toLowerCase() === 'none') {
+    return null;
   }
 
   const agenteHttps = new https.Agent({
@@ -67,33 +75,36 @@ async function obterBearerTokenADN(keyPem: string, certPem: string): Promise<str
     rejectUnauthorized: false
   });
 
-  const urlToken = process.env.ADN_URL_TOKEN || 'https://certificado.api.via.nfse.gov.br/conectar/token';
-
   const bodyCampos = querystring.stringify({
     grant_type: process.env.ADN_GRANT_TYPE || 'client_credentials',
     scope: process.env.ADN_SCOPE || 'nfse:emissao'
   });
 
-  console.log('🔑 [SERPRO] Solicitando novo Bearer Token via mTLS...');
+  console.log('🔑 [SERPRO] Solicitando Bearer Token via mTLS...');
   
-  const respostaAuth = await axios.post(urlToken, bodyCampos, {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    httpsAgent: agenteHttps
-  });
+  try {
+    const respostaAuth = await axios.post(urlToken, bodyCampos, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      httpsAgent: agenteHttps,
+      timeout: 5000 // Timeout curto para não prender a fila se der erro/404
+    });
 
-  if (respostaAuth.data?.access_token) {
-    tokenCache = {
-      token: respostaAuth.data.access_token,
-      expiresAt: agora + (respostaAuth.data.expires_in * 1000)
-    };
-    return respostaAuth.data.access_token;
+    if (respostaAuth.data?.access_token) {
+      tokenCache = {
+        token: respostaAuth.data.access_token,
+        expiresAt: agora + (respostaAuth.data.expires_in * 1000)
+      };
+      return respostaAuth.data.access_token;
+    }
+  } catch (error: any) {
+    console.log('⚠️ [SERPRO] Endpoint de Token indisponível ou inexistente (Erro 404/Comum em Produção). Continuando com autenticação mTLS direta por certificado.');
   }
 
-  throw new Error("Não foi possível gerar o Bearer Token dinâmico com o SERPRO.");
+  return null;
 }
 
 /**
- * 🔍 NOVA FUNÇÃO IMPLEMENTADA: CONSULTA STATUS REAL DO PROTOCOLO
+ * 🔍 FUNÇÃO IMPLEMENTADA E RESILIENTE: CONSULTA STATUS REAL DO PROTOCOLO
  */
 export const consultarProtocolo = async (protocolo: string): Promise<any> => {
   try {
@@ -111,11 +122,11 @@ export const consultarProtocolo = async (protocolo: string): Promise<any> => {
 
     const { keyPem, certPem } = pfxParaPem(pfxBuffer, pfxPassword);
     
-    // 2. Garante que temos um Bearer Token válido ativo
+    // 2. Tenta pegar o token (se o barramento exigir)
     const tokenValido = await obterBearerTokenADN(keyPem, certPem);
 
-    const baseConsultaUrl = process.env.ADN_URL_EMISSAO 
-      ? process.env.ADN_URL_EMISSAO.replace('/recepcao/nfsev', '') 
+    const baseConsultaUrl = process.env.ADN_API_BASE_URL 
+      ? process.env.ADN_API_BASE_URL.trim()
       : 'https://certificado.api.via.nfse.gov.br';
       
     const urlConsultaCompleta = `${baseConsultaUrl}/consultar/${protocolo}`;
@@ -126,18 +137,22 @@ export const consultarProtocolo = async (protocolo: string): Promise<any> => {
       rejectUnauthorized: false
     });
 
-    console.log(`🔍 [SERPRO] Consultando status do protocolo: ${protocolo}`);
+    console.log(`🔍 [SERPRO] Consultando status do protocolo: ${protocolo} (Via mTLS direto)`);
+
+    const headersConfig: any = {
+      'Accept': 'application/json',
+      'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
+    };
+
+    if (tokenValido) {
+      headersConfig['Authorization'] = `Bearer ${tokenValido}`;
+    }
 
     const resposta = await axios.get(urlConsultaCompleta, {
       httpsAgent: agenteHttps,
-      headers: {
-        'Authorization': `Bearer ${tokenValido}`,
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
-      }
+      headers: headersConfig
     });
 
-    // Se o governo retornar dados válidos da nota processada
     if (resposta.data) {
       return {
         sucesso: true,
@@ -168,7 +183,7 @@ export const consultarProtocolo = async (protocolo: string): Promise<any> => {
 };
 
 /**
- * 🚀 TRANSMISSÃO EM XML PURO E COMPATÍVEL COM O CONTRATO NACIONAL
+ * 🚀 TRANSMISSÃO EM XML PURO COM SEGURANÇA CONTRA BLOQUEIOS DE TOKEN (BYPASS)
  */
 export const emitirNotaNacional = async (payloadRecebido: any) => {
   try {
@@ -200,13 +215,13 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     const xmlLimpoParaAssinar = xmlBruto.replace(/>\s+</g, '><').trim();
     const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpoParaAssinar, keyPem, certPem);
 
-    // 2. Busca o token de autorização dinamicamente por mTLS
+    // 2. Tenta buscar o token dinamicamente (avança sem travar caso falhe)
     const tokenValido = await obterBearerTokenADN(keyPem, certPem);
 
-    // 3. LOG REFORMULADO - Indica o uso do padrão correto
-    console.log(`📄 [SERPRO] Transmitindo XML Puro com Bearer Token...`);
-
+    // 3. Define a URL correta de recepção do XML Puro
     const urlEmissao = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
+
+    console.log(`📄 [SERPRO] Transmitindo XML Puro (${xmlAssinado.length} caracteres) via Handshake mTLS...`);
 
     const agenteHttps = new https.Agent({
       key: keyPem,
@@ -214,15 +229,22 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       rejectUnauthorized: false
     });
 
-    // 4. Envia o XML cru no corpo da requisição sem envelopamento JSON
+    // 4. Configuração adaptativa de Headers
+    const headersConfig: any = {
+      'Content-Type': 'application/xml; charset=utf-8',
+      'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
+    };
+
+    // Se um token válido foi extraído, anexa-o. Caso contrário, confia apenas nas chaves mTLS
+    if (tokenValido) {
+      headersConfig['Authorization'] = `Bearer ${tokenValido}`;
+    }
+
+    // 5. Transmissão da string limpa do XML para o servidor do governo
     const resposta = await axios.post(urlEmissao, xmlAssinado, {
       httpsAgent: agenteHttps,
-      headers: {
-        'Content-Type': 'application/xml; charset=utf-8',
-        'Authorization': `Bearer ${tokenValido}`,
-        'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
-      },
-      transformRequest: [(data) => data] // 💡 Impede o Axios de converter ou corromper a string XML
+      headers: headersConfig,
+      transformRequest: [(data) => data] // Trava o Axios para prevenir parseamento incorreto de string externa
     });
 
     const protocolo = resposta.data?.protocolo || resposta.data?.dados?.protocolo || `ADN_${Date.now()}`;
