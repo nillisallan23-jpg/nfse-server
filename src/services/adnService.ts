@@ -94,7 +94,7 @@ async function obterBearerTokenADN(keyPem: string, certPem: string): Promise<str
       return respostaAuth.data.access_token;
     }
   } catch (error: any) {
-    console.log('⚠️ [SERPRO] Endpoint de Token indisponível. Continuando com autenticação mTLS direta.');
+    console.log('⚠️ [SERPRO] Endpoint de Token indisponível ou inexistente (Erro 404/Comum em Produção). Continuando com autenticação mTLS direta por certificado.');
   }
 
   return null;
@@ -119,7 +119,6 @@ export const consultarProtocolo = async (protocolo: string): Promise<any> => {
     const { keyPem, certPem } = pfxParaPem(pfxBuffer, pfxPassword);
     const tokenValido = await obterBearerTokenADN(keyPem, certPem);
 
-    // Endpoint homologado de consulta do barramento nacional
     const urlConsultaCompleta = `https://certificado.api.via.nfse.gov.br/consultar/${protocolo}`;
 
     const agenteHttps = new https.Agent({
@@ -174,7 +173,7 @@ export const consultarProtocolo = async (protocolo: string): Promise<any> => {
 };
 
 /**
- * 🚀 TRANSMISSÃO EM XML PURO COM SEGURANÇA CONTRA BLOQUEIOS de TIMEOUT
+ * 🚀 TRANSMISSÃO EM XML PURO INDIVIDUAL (RECEPÇÃO DE NOTA DIRETA VIA mTLS)
  */
 export const emitirNotaNacional = async (payloadRecebido: any) => {
   try {
@@ -202,15 +201,16 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       throw new Error("O payload recebido não contém um XML válido.");
     }
 
+    // Limpeza completa de quebras de linha e espaçamentos internos para transmissão linear limpa
     const xmlLimpoParaAssinar = xmlBruto.replace(/[\r\n]/g, '').replace(/>\s+</g, '><').trim();
     const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpoParaAssinar, keyPem, certPem);
 
     const tokenValido = await obterBearerTokenADN(keyPem, certPem);
 
-    // 🎯 URL Oficial Homologada para recepção de Lotes assinalados em XML Puro
-    const urlEmissao = 'https://certificado.api.via.nfse.gov.br/recepcao/lote';
+    // Endpoint homologado de Produção do SERPRO para recepção de XML individual assinado
+    const urlEmissao = 'https://certificado.api.via.nfse.gov.br/recepcao/nfse';
 
-    console.log(`📄 [SERPRO] Transmitindo Lote XML Puro (${xmlAssinado.length} caracteres)...`);
+    console.log(`📄 [SERPRO] Transmitindo XML Puro (${xmlAssinado.length} caracteres) via Handshake mTLS...`);
 
     const agenteHttps = new https.Agent({
       key: keyPem,
@@ -220,7 +220,7 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
 
     const headersConfig: any = {
       'Content-Type': 'application/xml; charset=utf-8',
-      'Accept': 'application/json, application/xml, */*',
+      'Accept': '*/*',
       'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
     };
 
@@ -249,7 +249,9 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
         ? JSON.stringify(error.response.data) 
         : String(error.response.data);
 
-      console.error(`❌ [ADN GOV REJECT] Status HTTP: ${erroStatus}`);
+      console.error(`❌ [ADN GOV REJECT] O governo recusou a requisição. Status HTTP: ${erroStatus}`);
+      console.error(`❌ [ADN GOV MOTIVO DETALHADO]: ${erroDados}`);
+
       return { 
         sucesso: false, 
         mensagem: `Erro retornado pelo servidor do governo (Status ${erroStatus}).`, 
