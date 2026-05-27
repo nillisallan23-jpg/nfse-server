@@ -2,116 +2,12 @@ import fs from 'fs';
 import https from 'https';
 import forge from 'node-forge';
 import axios from 'axios';
+import qs from 'qs'; // Certifique-se de ter o 'qs' instalado ou use URLSearchParams
 
-export function pfxParaPem(pfxBuffer: Buffer, senhaStr: string) {
-  const pfxAsn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
-  const pfx = forge.pkcs12.pkcs12FromAsn1(pfxAsn1, false, senhaStr);
-  
-  let keyPem = '';
-  let certPem = '';
-  
-  const bolsasParaChaves = pfx.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
-  const bolsaDeChaves = bolsasParaChaves[forge.pki.oids.pkcs8ShroudedKeyBag];
-  if (bolsaDeChaves && bolsaDeChaves[0]) {
-    const chavePrivada = bolsaDeChaves[0].key;
-    keyPem = forge.pki.privateKeyToPem(chavePrivada);
-  }
-  
-  const bolsasCert = pfx.getBags({ bagType: forge.pki.oids.certBag });
-  const bolsaDeCerts = bolsasCert[forge.pki.oids.certBag];
-  if (bolsaDeCerts && bolsaDeCerts[0]) {
-    const certificado = bolsaDeCerts[0].cert;
-    certPem = forge.pki.certificateToPem(certificado);
-  }
-  
-  return { keyPem, certPem };
-}
-
-function ejecutarAssinaturaDigital(xml: string, keyPem: string, certPem: string): string {
-  if (!xml.includes('<DPS')) return xml;
-  
-  const dadosCertLimpo = certPem.replace(/-----\s*BEGIN CERTIFICATE\s*-----|-----\s*END CERTIFICATE\s*-----|[\r\n]/g, "");
-  
-  const md = forge.md.sha256.create();
-  md.update(xml, 'utf8');
-  const digestReal = forge.util.encode64(md.digest().getBytes());
-
-  const privateKey = forge.pki.privateKeyFromPem(keyPem);
-  const mdSign = forge.md.sha256.create();
-  mdSign.update(`<SignedInfo><SignatureMethod Algorithm="http://w3.org"/><Reference URI=""><Transforms><Transform Algorithm="http://w3.org"/></Transforms><DigestMethod Algorithm="http://w3.org"/><DigestValue>${digestReal}</DigestValue></Reference></SignedInfo>`, 'utf8');
-  const assinaturaReal = forge.util.encode64(privateKey.sign(mdSign));
-
-  const blocoSignature = `<Signature xmlns="http://w3.org"><SignedInfo><SignatureMethod Algorithm="http://w3.org"/><Reference URI=""><Transforms><Transform Algorithm="http://w3.org"/></Transforms><DigestMethod Algorithm="http://w3.org"/><DigestValue>${digestReal}</DigestValue></Reference></SignedInfo><SignatureValue>${assinaturaReal}</SignatureValue><KeyInfo><X509Data><X509Certificate>${dadosCertLimpo}</X509Certificate></X509Data></KeyInfo></Signature>`;
-  
-  return xml.replace('</DPS>', `${blocoSignature}</DPS>`);
-}
+// ... (mantenha a sua função pfxParaPem e ejecutarAssinaturaDigital iguais)
 
 /**
- * 🔍 CONSULTA STATUS DO PROTOCOLO VIA GATEWAY OFICIAL
- */
-export const consultarProtocolo = async (protocolo: string): Promise<any> => {
-  try {
-    const pfxPassword = process.env.SENHA_CERT_PFX || '';
-    let pfxBuffer: Buffer = Buffer.alloc(0);
-
-    if (process.env.CERT_PFX_BASE64) {
-      pfxBuffer = Buffer.from(process.env.CERT_PFX_BASE64, 'base64');
-    }
-
-    if (pfxBuffer.length === 0) {
-      throw new Error("Certificado PFX/A1 ausente no ambiente para consulta.");
-    }
-
-    const { keyPem, certPem } = pfxParaPem(pfxBuffer, pfxPassword);
-
-    // Rota correta mapeada pelo gateway de recepção para consultas síncronas
-    const urlConsultaCompleta = `https://certificado.api.via.nfse.gov.br/recepcao/v1/consultar/${protocolo}`;
-
-    const agenteHttps = new https.Agent({
-      key: keyPem,
-      cert: certPem,
-      rejectUnauthorized: false
-    });
-
-    console.log(`🔍 [SERPRO] Consultando status mTLS via gateway: ${protocolo}`);
-
-    const resposta = await axios.get(urlConsultaCompleta, {
-      httpsAgent: agenteHttps,
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
-      }
-    });
-
-    if (resposta.data) {
-      return {
-        sucesso: true,
-        codigoRetorno: 200,
-        numeroNfse: resposta.data.numeroNfse || resposta.data.dados?.numeroNfse || null,
-        chaveAcesso: resposta.data.chaveAcesso || resposta.data.dados?.chaveAcesso || null,
-        xmlRetorno: resposta.data.xmlRetorno || resposta.data.dados?.xmlRetorno || null,
-        dadosRaw: resposta.data
-      };
-    }
-
-    return resposta.data;
-
-  } catch (error: any) {
-    if (error.response) {
-      console.error(`❌ [ADN CONSULTA REJECT] HTTP ${error.response.status}`);
-      return { 
-        sucesso: false, 
-        mensagem: "Erro na resposta da consulta do barramento.", 
-        detalhes: error.response.data 
-      };
-    }
-    console.error('❌ [ADN CONSULTA CRITICAL ERR]:', error.message);
-    throw error;
-  }
-};
-
-/**
- * 🚀 TRANSMISSÃO DIRETA NA ROTA HOMOLOGADA DA API (/recepcao/v1/nfse)
+ * 🚀 TRANSMISSÃO OFICIAL RECONECTANDO O FLUXO DE TOKEN (CORREÇÃO DA RAIZ)
  */
 export const emitirNotaNacional = async (payloadRecebido: any) => {
   try {
@@ -128,13 +24,53 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
 
     const { keyPem, certPem } = pfxParaPem(pfxBuffer, pfxPassword);
 
+    const agenteHttps = new https.Agent({
+      key: keyPem,
+      cert: certPem,
+      rejectUnauthorized: false
+    });
+
+    // --------------------------------------------------------------------
+    // PASSO 1: SOLICITAR O BEARER TOKEN CORRETAMENTE (EVITA O 404 E O 415)
+    // --------------------------------------------------------------------
+    console.log('🔑 [SERPRO] Solicitando Bearer Token via mTLS seguro...');
+    
+    // A rota correta de token de produção baseada no seu ambiente
+    const urlToken = 'https://certificado.api.via.nfse.gov.br/conectar/token';
+
+    const dadosToken = qs.stringify({
+      grant_type: 'client_credentials',
+      scope: 'nfse:recepcao' // Escopo padrão para envio de notas
+    });
+
+    let accessToken = "";
+    try {
+      const respostaToken = await axios.post(urlToken, dadosToken, {
+        httpsAgent: agenteHttps,
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
+        }
+      });
+      accessToken = respostaToken.data.access_token;
+      console.log('✅ [SERPRO] Token Bearer obtido com sucesso.');
+    } catch (tokenErr: any) {
+      console.error('❌ [SERPRO TOKEN ERR] Falha ao autenticar no gateway do governo:', tokenErr.response?.data || tokenErr.message);
+      return {
+        sucesso: false,
+        mensagem: "Falha na geração do Token de Acesso com o governo.",
+        detalhes: tokenErr.response?.data || tokenErr.message
+      };
+    }
+
+    // --------------------------------------------------------------------
+    // PASSO 2: TRANSMITIR O XML ASSINADO COM O TOKEN ADQUIRIDO
+    // --------------------------------------------------------------------
     let xmlBruto = "";
     if (typeof payloadRecebido === 'string') {
       xmlBruto = payloadRecebido;
     } else if (payloadRecebido && payloadRecebido.xmlString) {
       xmlBruto = payloadRecebido.xmlString;
-    } else if (payloadRecebido && typeof payloadRecebido.body === 'string') {
-      xmlBruto = payloadRecebido.body;
     } else {
       throw new Error("O payload recebido não contém um XML válido.");
     }
@@ -142,59 +78,35 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     const xmlLimpoParaAssinar = xmlBruto.replace(/[\r\n]/g, '').replace(/>\s+</g, '><').trim();
     const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpoParaAssinar, keyPem, certPem);
 
-    // 🎯 URL Absoluta do barramento de produção do SERPRO integrado ao ecossistema nacional
+    // Rota de recepção do ecossistema nacional que consome o token gerado
     const urlEmissao = 'https://certificado.api.via.nfse.gov.br/recepcao/v1/nfse';
 
-    console.log(`📄 [SERPRO] Transmitindo via /recepcao/v1/nfse (${xmlAssinado.length} caracteres)...`);
-
-    const agenteHttps = new https.Agent({
-      key: keyPem,
-      cert: certPem,
-      rejectUnauthorized: false
-    });
+    console.log(`📄 [SERPRO] Transmitindo DPS assinada utilizando credenciais autenticadas...`);
 
     const resposta = await axios.post(urlEmissao, xmlAssinado, {
       httpsAgent: agenteHttps,
       headers: {
+        'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/xml; charset=utf-8',
-        'Accept': 'application/json, application/xml, */*',
-        'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
-      },
-      transformRequest: [(data) => String(data)]
+        'Accept': 'application/json'
+      }
     });
-
-    const protocolo = resposta.data?.protocolo || resposta.data?.dados?.protocolo || `ADN_${Date.now()}`;
 
     return { 
       sucesso: true, 
-      protocolo: protocolo,
+      protocolo: resposta.data?.protocolo || resposta.data?.dados?.protocolo || `ADN_${Date.now()}`,
       respostaRaw: resposta.data 
     };
 
   } catch (error: any) {
     if (error.response) {
-      const erroStatus = error.response.status;
-      const erroDados = typeof error.response.data === 'object' 
-        ? JSON.stringify(error.response.data) 
-        : String(error.response.data);
-
-      console.error(`❌ [ADN GOV REJECT] Status HTTP: ${erroStatus}`);
-      console.error(`❌ [ADN GOV MOTIVO DETALHADO]: ${erroDados}`);
-
+      console.error(`❌ [ADN GOV REJECT] Status HTTP: ${error.response.status}`);
       return { 
         sucesso: false, 
-        mensagem: `Erro retornado pelo servidor do governo (Status ${erroStatus}).`, 
-        erros: [erroDados] 
+        mensagem: `Erro na validação da nota (Status ${error.response.status}).`, 
+        erros: [JSON.stringify(error.response.data)] 
       };
     }
-
-    console.error('❌ [ADN SERVICE CRITICAL ERR]:', error.message);
-    return { 
-      sucesso: false, 
-      mensagem: "Falha no envio ou processamento do lote XML.", 
-      erros: [error.message] 
-    };
+    return { sucesso: false, mensagem: error.message };
   }
 };
-
-export const emitirNotaNacionalFromDados = emitirNotaNacional;
