@@ -29,7 +29,7 @@ function pfxParaPem(pfxBuffer: Buffer, senhaPfx: string) {
   const bags = pfx.getBags({ bagType: forge.pki.oids.certBag });
   const certBags = bags[forge.pki.oids.certBag] || [];
   if (certBags.length > 0 && certBags[0].cert) {
-    certificadoPem = forge.pki.certificateToPurePem(certBags[0].cert);
+    certificadoPem = forge.pki.certificateToPem(certBags[0].cert);
   }
 
   if (!chavePrivadaPem || !certificadoPem) {
