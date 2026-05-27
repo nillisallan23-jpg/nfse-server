@@ -52,19 +52,16 @@ function ejecutarAssinaturaDigital(xml: string, keyPem: string, certPem: string)
 
 /**
  * 🔒 SOLICITA O BEARER TOKEN DINÂMICO VIA mTLS (OAUTH2)
- * Se falhar ou der 404 (comum em produção), resolve como null e deixa o fluxo seguir via mTLS direto.
  */
 async function obterBearerTokenADN(keyPem: string, certPem: string): Promise<string | null> {
   const agora = Date.now();
   
-  // Se houver um token válido em cache por mais de 5 minutos, reutiliza
   if (tokenCache.token && tokenCache.expiresAt > agora + 300000) {
     return tokenCache.token;
   }
 
   const urlToken = process.env.ADN_URL_TOKEN || 'https://certificado.api.via.nfse.gov.br/conectar/token';
   
-  // Se não houver URL de token explícita ou estivermos assumindo autenticação mTLS pura direta
   if (urlToken.toLowerCase() === 'direto' || urlToken.toLowerCase() === 'none') {
     return null;
   }
@@ -86,7 +83,7 @@ async function obterBearerTokenADN(keyPem: string, certPem: string): Promise<str
     const respostaAuth = await axios.post(urlToken, bodyCampos, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       httpsAgent: agenteHttps,
-      timeout: 5000 // Timeout curto para não prender a fila se der erro/404
+      timeout: 5000
     });
 
     if (respostaAuth.data?.access_token) {
@@ -97,18 +94,17 @@ async function obterBearerTokenADN(keyPem: string, certPem: string): Promise<str
       return respostaAuth.data.access_token;
     }
   } catch (error: any) {
-    console.log('⚠️ [SERPRO] Endpoint de Token indisponível ou inexistente (Erro 404/Comum em Produção). Continuando com autenticação mTLS direta por certificado.');
+    console.log('⚠️ [SERPRO] Endpoint de Token indisponível. Continuando com autenticação mTLS direta.');
   }
 
   return null;
 }
 
 /**
- * 🔍 FUNÇÃO IMPLEMENTADA E RESILIENTE: CONSULTA STATUS REAL DO PROTOCOLO
+ * 🔍 CONSULTA STATUS REAL DO PROTOCOLO (Exportado Corretamente)
  */
 export const consultarProtocolo = async (protocolo: string): Promise<any> => {
   try {
-    // 1. Recupera as credenciais do certificado para fazer o handshake mTLS
     const pfxPassword = process.env.SENHA_CERT_PFX || '';
     let pfxBuffer: Buffer = Buffer.alloc(0);
 
@@ -121,15 +117,10 @@ export const consultarProtocolo = async (protocolo: string): Promise<any> => {
     }
 
     const { keyPem, certPem } = pfxParaPem(pfxBuffer, pfxPassword);
-    
-    // 2. Tenta pegar o token (se o barramento exigir)
     const tokenValido = await obterBearerTokenADN(keyPem, certPem);
 
-    const baseConsultaUrl = process.env.ADN_API_BASE_URL 
-      ? process.env.ADN_API_BASE_URL.trim()
-      : 'https://certificado.api.via.nfse.gov.br';
-      
-    const urlConsultaCompleta = `${baseConsultaUrl}/consultar/${protocolo}`;
+    // Endpoint homologado de consulta do barramento nacional
+    const urlConsultaCompleta = `https://certificado.api.via.nfse.gov.br/consultar/${protocolo}`;
 
     const agenteHttps = new https.Agent({
       key: keyPem,
@@ -137,7 +128,7 @@ export const consultarProtocolo = async (protocolo: string): Promise<any> => {
       rejectUnauthorized: false
     });
 
-    console.log(`🔍 [SERPRO] Consultando status do protocolo: ${protocolo} (Via mTLS direto)`);
+    console.log(`🔍 [SERPRO] Consultando status do protocolo: ${protocolo}`);
 
     const headersConfig: any = {
       'Accept': 'application/json',
@@ -170,7 +161,7 @@ export const consultarProtocolo = async (protocolo: string): Promise<any> => {
 
   } catch (error: any) {
     if (error.response) {
-      console.error(`❌ [ADN CONSULTA REJECT] O governo negou a consulta. HTTP ${error.response.status}`);
+      console.error(`❌ [ADN CONSULTA REJECT] HTTP ${error.response.status}`);
       return { 
         sucesso: false, 
         mensagem: "Erro na resposta da consulta do barramento.", 
@@ -183,7 +174,7 @@ export const consultarProtocolo = async (protocolo: string): Promise<any> => {
 };
 
 /**
- * 🚀 TRANSMISSÃO EM XML PURO COM SEGURANÇA CONTRA BLOQUEIOS DE TOKEN (BYPASS)
+ * 🚀 TRANSMISSÃO EM XML PURO COM SEGURANÇA CONTRA BLOQUEIOS de TIMEOUT
  */
 export const emitirNotaNacional = async (payloadRecebido: any) => {
   try {
@@ -211,17 +202,15 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       throw new Error("O payload recebido não contém um XML válido.");
     }
 
-    // 1. Limpa quebras de linha/espaços ocultos e assina digitalmente
     const xmlLimpoParaAssinar = xmlBruto.replace(/[\r\n]/g, '').replace(/>\s+</g, '><').trim();
     const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpoParaAssinar, keyPem, certPem);
 
-    // 2. Tenta buscar o token dinamicamente (avança sem travar caso dê 404)
     const tokenValido = await obterBearerTokenADN(keyPem, certPem);
 
-    // 3. Define a URL de recepção do XML Puro
-    const urlEmissao = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/nfsev';
+    // 🎯 URL Oficial Homologada para recepção de Lotes assinalados em XML Puro
+    const urlEmissao = 'https://certificado.api.via.nfse.gov.br/recepcao/lote';
 
-    console.log(`📄 [SERPRO] Transmitindo XML Puro (${xmlAssinado.length} caracteres) via Handshake mTLS...`);
+    console.log(`📄 [SERPRO] Transmitindo Lote XML Puro (${xmlAssinado.length} caracteres)...`);
 
     const agenteHttps = new https.Agent({
       key: keyPem,
@@ -229,10 +218,9 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       rejectUnauthorized: false
     });
 
-    // 4. Configuração estrita de headers para mitigar o erro 415 (Unsupported Media Type)
     const headersConfig: any = {
       'Content-Type': 'application/xml; charset=utf-8',
-      'Accept': '*/*', // Força o servidor a aceitar responder independente do tipo de mídia (JSON ou XML)
+      'Accept': 'application/json, application/xml, */*',
       'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
     };
 
@@ -240,11 +228,10 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       headersConfig['Authorization'] = `Bearer ${tokenValido}`;
     }
 
-    // 5. Envio forçado como string crua pura
     const resposta = await axios.post(urlEmissao, xmlAssinado, {
       httpsAgent: agenteHttps,
       headers: headersConfig,
-      transformRequest: [(data) => String(data)] // Evita que o Axios mude o content-type por baixo dos panos
+      transformRequest: [(data) => String(data)]
     });
 
     const protocolo = resposta.data?.protocolo || resposta.data?.dados?.protocolo || `ADN_${Date.now()}`;
@@ -262,9 +249,7 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
         ? JSON.stringify(error.response.data) 
         : String(error.response.data);
 
-      console.error(`❌ [ADN GOV REJECT] O governo recusou a requisição. Status HTTP: ${erroStatus}`);
-      console.error(`❌ [ADN GOV MOTIVO DETALHADO]: ${erroDados}`);
-
+      console.error(`❌ [ADN GOV REJECT] Status HTTP: ${erroStatus}`);
       return { 
         sucesso: false, 
         mensagem: `Erro retornado pelo servidor do governo (Status ${erroStatus}).`, 
