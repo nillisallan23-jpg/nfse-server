@@ -49,7 +49,7 @@ function ejecutarAssinaturaDigital(xmlString: string, keyPem: string, certPem: s
 }
 
 /**
- * 🚀 TRANSMISSÃO MANUAL OFICIAL (CORREÇÃO DO ERRO 404)
+ * 🚀 TRANSMISSÃO MANUAL OFICIAL (CORREÇÃO DE SUBDOMÍNIOS DO GOVERNO)
  */
 export const emitirNotaNacional = async (payloadRecebido: any) => {
   try {
@@ -72,9 +72,9 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       rejectUnauthorized: false
     });
 
-    // 1. SOLICITAR BEARER TOKEN (Evita o Erro 404)
+    // 1. SOLICITAR BEARER TOKEN (Endpoint correto sem o prefixo 'certificado.')
     console.log('🔑 [SERPRO] Solicitando Bearer Token via mTLS seguro...');
-    const urlToken = process.env.ADN_URL_TOKEN || 'https://certificado.api.via.nfse.gov.br/v1/autenticacao/token';
+    const urlToken = process.env.ADN_URL_TOKEN || 'https://api.via.nfse.gov.br/v1/autenticacao/token';
 
     const dadosToken = qs.stringify({
       grant_type: 'client_credentials',
@@ -115,6 +115,7 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     const xmlLimpo = xmlBruto.replace(/[\r\n]/g, '').replace(/>\s+</g, '><').trim();
     const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpo, keyPem, certPem);
 
+    // Endpoint de recepção correto (Este sim exige o prefixo 'certificado.')
     const urlEmissao = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/v1/nfse';
     console.log(`📄 [SERPRO] Transmitindo XML para a rota oficial...`);
 
@@ -135,13 +136,4 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
 
   } catch (error: any) {
     if (error.response) {
-      console.error(`❌ [ADN GOV REJECT] Status HTTP: ${error.response.status}`, error.response.data);
-      return { 
-        sucesso: false, 
-        mensagem: `Erro retornado pelo servidor do governo (Status ${error.response.status}).`, 
-        erros: [JSON.stringify(error.response.data)] 
-      };
-    }
-    return { sucesso: false, mensagem: error.message };
-  }
-};
+      console.error(`❌ [ADN GOV REJECT] Status HTTP: ${error.response.status}`,
