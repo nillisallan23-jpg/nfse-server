@@ -47,7 +47,7 @@ function ejecutarAssinaturaDigital(xml: string, keyPem: string, certPem: string)
 }
 
 /**
- * 🔍 CONSULTA STATUS DO PROTOCOLO
+ * 🔍 CONSULTA STATUS DO PROTOCOLO VIA GATEWAY OFICIAL
  */
 export const consultarProtocolo = async (protocolo: string): Promise<any> => {
   try {
@@ -64,8 +64,8 @@ export const consultarProtocolo = async (protocolo: string): Promise<any> => {
 
     const { keyPem, certPem } = pfxParaPem(pfxBuffer, pfxPassword);
 
-    // Rota padrão homologada para consulta de protocolo via mTLS
-    const urlConsultaCompleta = `https://certificado.api.via.nfse.gov.br/nfse/consultar/${protocolo}`;
+    // Rota correta mapeada pelo gateway de recepção para consultas síncronas
+    const urlConsultaCompleta = `https://certificado.api.via.nfse.gov.br/recepcao/v1/consultar/${protocolo}`;
 
     const agenteHttps = new https.Agent({
       key: keyPem,
@@ -73,7 +73,7 @@ export const consultarProtocolo = async (protocolo: string): Promise<any> => {
       rejectUnauthorized: false
     });
 
-    console.log(`🔍 [SERPRO] Consultando status mTLS na rota: ${protocolo}`);
+    console.log(`🔍 [SERPRO] Consultando status mTLS via gateway: ${protocolo}`);
 
     const resposta = await axios.get(urlConsultaCompleta, {
       httpsAgent: agenteHttps,
@@ -111,7 +111,7 @@ export const consultarProtocolo = async (protocolo: string): Promise<any> => {
 };
 
 /**
- * 🚀 TRANSMISSÃO EM XML PURO DIRETA NA ROTA CORRETA (/nfse/recepcao/nfse)
+ * 🚀 TRANSMISSÃO DIRETA NA ROTA HOMOLOGADA DA API (/recepcao/v1/nfse)
  */
 export const emitirNotaNacional = async (payloadRecebido: any) => {
   try {
@@ -142,10 +142,10 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     const xmlLimpoParaAssinar = xmlBruto.replace(/[\r\n]/g, '').replace(/>\s+</g, '><').trim();
     const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpoParaAssinar, keyPem, certPem);
 
-    // 🎯 URL Unificada e Corrigida para Recepção Direta de XML via mTLS do SERPRO
-    const urlEmissao = 'https://certificado.api.via.nfse.gov.br/nfse/recepcao/nfse';
+    // 🎯 URL Absoluta do barramento de produção do SERPRO integrado ao ecossistema nacional
+    const urlEmissao = 'https://certificado.api.via.nfse.gov.br/recepcao/v1/nfse';
 
-    console.log(`📄 [SERPRO] Transmitindo via barramento /nfse/recepcao/nfse (${xmlAssinado.length} caracteres)...`);
+    console.log(`📄 [SERPRO] Transmitindo via /recepcao/v1/nfse (${xmlAssinado.length} caracteres)...`);
 
     const agenteHttps = new https.Agent({
       key: keyPem,
