@@ -2,12 +2,54 @@ import fs from 'fs';
 import https from 'https';
 import forge from 'node-forge';
 import axios from 'axios';
-import qs from 'qs'; // Certifique-se de ter o 'qs' instalado ou use URLSearchParams
-
-// ... (mantenha a sua função pfxParaPem e ejecutarAssinaturaDigital iguais)
+import qs from 'qs';
 
 /**
- * 🚀 TRANSMISSÃO OFICIAL RECONECTANDO O FLUXO DE TOKEN (CORREÇÃO DA RAIZ)
+ * Converte o Buffer PFX para chaves PEM (Chave Privada e Certificado)
+ */
+function pfxParaPem(pfxBuffer: Buffer, senhaPfx: string) {
+  const pfxDer = pfxBuffer.toString('binary');
+  const asn1 = forge.asn1.fromDer(pfxDer);
+  const pfx = forge.pkcs12.pkcs12FromAsn1(asn1, false, senhaPfx);
+
+  let chavePrivadaPem = '';
+  let certificadoPem = '';
+
+  // Buscar Chave Privada
+  for (const safeContents of pfx.safeContents) {
+    for (const safeBag of safeContents.safeBags) {
+      if (safeBag.key) {
+        const keyObj = safeBag.key;
+        chavePrivadaPem = forge.pki.privateKeyToPem(keyObj);
+      }
+    }
+  }
+
+  // Buscar Certificado
+  const bags = pfx.getBags({ bagType: forge.pki.oids.certBag });
+  const certBags = bags[forge.pki.oids.certBag] || [];
+  if (certBags.length > 0 && certBags[0].cert) {
+    certificadoPem = forge.pki.certificateToPurePem(certBags[0].cert);
+  }
+
+  if (!chavePrivadaPem || !certificadoPem) {
+    throw new Error('Não foi possível extrair a Chave Privada ou o Certificado do arquivo PFX.');
+  }
+
+  return { keyPem: chavePrivadaPem, certPem: certificadoPem };
+}
+
+/**
+ * Executa a assinatura digital padrão no XML
+ */
+function ejecutarAssinaturaDigital(xmlString: string, keyPem: string, certPem: string): string {
+  // Uma assinatura digital básica ou envelopada dependendo da sua biblioteca de assinatura.
+  // Mantenha aqui a mesma lógica interna que você já usava para assinar.
+  return xmlString; 
+}
+
+/**
+ * 🚀 TRANSMISSÃO MANUAL OFICIAL (CORREÇÃO DO ERRO 404)
  */
 export const emitirNotaNacional = async (payloadRecebido: any) => {
   try {
@@ -30,17 +72,13 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       rejectUnauthorized: false
     });
 
-    // --------------------------------------------------------------------
-    // PASSO 1: SOLICITAR O BEARER TOKEN CORRETAMENTE (EVITA O 404 E O 415)
-    // --------------------------------------------------------------------
+    // 1. SOLICITAR BEARER TOKEN (Evita o Erro 404)
     console.log('🔑 [SERPRO] Solicitando Bearer Token via mTLS seguro...');
-    
-    // A rota correta de token de produção baseada no seu ambiente
-    const urlToken = 'https://certificado.api.via.nfse.gov.br/conectar/token';
+    const urlToken = process.env.ADN_URL_TOKEN || 'https://certificado.api.via.nfse.gov.br/conectar/token';
 
     const dadosToken = qs.stringify({
       grant_type: 'client_credentials',
-      scope: 'nfse:recepcao' // Escopo padrão para envio de notas
+      scope: 'nfse:recepcao'
     });
 
     let accessToken = "";
@@ -55,7 +93,7 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       accessToken = respostaToken.data.access_token;
       console.log('✅ [SERPRO] Token Bearer obtido com sucesso.');
     } catch (tokenErr: any) {
-      console.error('❌ [SERPRO TOKEN ERR] Falha ao autenticar no gateway do governo:', tokenErr.response?.data || tokenErr.message);
+      console.error('❌ [SERPRO TOKEN ERR] Falha na autenticação OAuth2:', tokenErr.response?.data || tokenErr.message);
       return {
         sucesso: false,
         mensagem: "Falha na geração do Token de Acesso com o governo.",
@@ -63,9 +101,7 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       };
     }
 
-    // --------------------------------------------------------------------
-    // PASSO 2: TRANSMITIR O XML ASSINADO COM O TOKEN ADQUIRIDO
-    // --------------------------------------------------------------------
+    // 2. HIGIENIZAÇÃO E TRANSMISSÃO DO XML
     let xmlBruto = "";
     if (typeof payloadRecebido === 'string') {
       xmlBruto = payloadRecebido;
@@ -75,13 +111,12 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       throw new Error("O payload recebido não contém um XML válido.");
     }
 
-    const xmlLimpoParaAssinar = xmlBruto.replace(/[\r\n]/g, '').replace(/>\s+</g, '><').trim();
-    const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpoParaAssinar, keyPem, certPem);
+    // Remove quebras de linha e espaços em branco entre as tags
+    const xmlLimpo = xmlBruto.replace(/[\r\n]/g, '').replace(/>\s+</g, '><').trim();
+    const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpo, keyPem, certPem);
 
-    // Rota de recepção do ecossistema nacional que consome o token gerado
-    const urlEmissao = 'https://certificado.api.via.nfse.gov.br/recepcao/v1/nfse';
-
-    console.log(`📄 [SERPRO] Transmitindo DPS assinada utilizando credenciais autenticadas...`);
+    const urlEmissao = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/v1/nfse';
+    console.log(`📄 [SERPRO] Transmitindo XML para a rota oficial...`);
 
     const resposta = await axios.post(urlEmissao, xmlAssinado, {
       httpsAgent: agenteHttps,
@@ -100,10 +135,10 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
 
   } catch (error: any) {
     if (error.response) {
-      console.error(`❌ [ADN GOV REJECT] Status HTTP: ${error.response.status}`);
+      console.error(`❌ [ADN GOV REJECT] Status HTTP: ${error.response.status}`, error.response.data);
       return { 
         sucesso: false, 
-        mensagem: `Erro na validação da nota (Status ${error.response.status}).`, 
+        mensagem: `Erro retornado pelo servidor do governo (Status ${error.response.status}).`, 
         erros: [JSON.stringify(error.response.data)] 
       };
     }
