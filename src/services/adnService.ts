@@ -2,10 +2,6 @@ import fs from 'fs';
 import https from 'https';
 import forge from 'node-forge';
 import axios from 'axios';
-import querystring from 'querystring';
-
-// Cache em memória para reaproveitar o Bearer Token dentro do tempo de validade
-let tokenCache = { token: null as string | null, expiresAt: 0 };
 
 export function pfxParaPem(pfxBuffer: Buffer, senhaStr: string) {
   const pfxAsn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
@@ -51,57 +47,7 @@ function ejecutarAssinaturaDigital(xml: string, keyPem: string, certPem: string)
 }
 
 /**
- * 🔒 SOLICITA O BEARER TOKEN DINÂMICO VIA mTLS (OAUTH2)
- */
-async function obterBearerTokenADN(keyPem: string, certPem: string): Promise<string | null> {
-  const agora = Date.now();
-  
-  if (tokenCache.token && tokenCache.expiresAt > agora + 300000) {
-    return tokenCache.token;
-  }
-
-  const urlToken = process.env.ADN_URL_TOKEN || 'https://certificado.api.via.nfse.gov.br/conectar/token';
-  
-  if (urlToken.toLowerCase() === 'direto' || urlToken.toLowerCase() === 'none') {
-    return null;
-  }
-
-  const agenteHttps = new https.Agent({
-    key: keyPem,
-    cert: certPem,
-    rejectUnauthorized: false
-  });
-
-  const bodyCampos = querystring.stringify({
-    grant_type: process.env.ADN_GRANT_TYPE || 'client_credentials',
-    scope: process.env.ADN_SCOPE || 'nfse:emissao'
-  });
-
-  console.log('🔑 [SERPRO] Solicitando Bearer Token via mTLS...');
-  
-  try {
-    const respostaAuth = await axios.post(urlToken, bodyCampos, {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      httpsAgent: agenteHttps,
-      timeout: 5000
-    });
-
-    if (respostaAuth.data?.access_token) {
-      tokenCache = {
-        token: respostaAuth.data.access_token,
-        expiresAt: agora + (respostaAuth.data.expires_in * 1000)
-      };
-      return respostaAuth.data.access_token;
-    }
-  } catch (error: any) {
-    console.log('⚠️ [SERPRO] Endpoint de Token indisponível ou inexistente (Erro 404/Comum em Produção). Continuando com autenticação mTLS direta por certificado.');
-  }
-
-  return null;
-}
-
-/**
- * 🔍 CONSULTA STATUS REAL DO PROTOCOLO (Exportado Corretamente)
+ * 🔍 CONSULTA STATUS DO PROTOCOLO VIA mTLS DIRETO
  */
 export const consultarProtocolo = async (protocolo: string): Promise<any> => {
   try {
@@ -117,9 +63,9 @@ export const consultarProtocolo = async (protocolo: string): Promise<any> => {
     }
 
     const { keyPem, certPem } = pfxParaPem(pfxBuffer, pfxPassword);
-    const tokenValido = await obterBearerTokenADN(keyPem, certPem);
 
-    const urlConsultaCompleta = `https://certificado.api.via.nfse.gov.br/consultar/${protocolo}`;
+    // Endpoint WebService mTLS Direto de Produção para Consultas
+    const urlConsultaCompleta = `https://certificado.api.via.nfse.gov.br/webservices/consultar/${protocolo}`;
 
     const agenteHttps = new https.Agent({
       key: keyPem,
@@ -127,20 +73,14 @@ export const consultarProtocolo = async (protocolo: string): Promise<any> => {
       rejectUnauthorized: false
     });
 
-    console.log(`🔍 [SERPRO] Consultando status do protocolo: ${protocolo}`);
-
-    const headersConfig: any = {
-      'Accept': 'application/json',
-      'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
-    };
-
-    if (tokenValido) {
-      headersConfig['Authorization'] = `Bearer ${tokenValido}`;
-    }
+    console.log(`🔍 [SERPRO] Consultando status mTLS do protocolo: ${protocolo}`);
 
     const resposta = await axios.get(urlConsultaCompleta, {
       httpsAgent: agenteHttps,
-      headers: headersConfig
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
+      }
     });
 
     if (resposta.data) {
@@ -150,8 +90,6 @@ export const consultarProtocolo = async (protocolo: string): Promise<any> => {
         numeroNfse: resposta.data.numeroNfse || resposta.data.dados?.numeroNfse || null,
         chaveAcesso: resposta.data.chaveAcesso || resposta.data.dados?.chaveAcesso || null,
         xmlRetorno: resposta.data.xmlRetorno || resposta.data.dados?.xmlRetorno || null,
-        urlPdf: resposta.data.urlPdf || resposta.data.dados?.urlPdf || null,
-        urlXml: resposta.data.urlXml || resposta.data.dados?.urlXml || null,
         dadosRaw: resposta.data
       };
     }
@@ -173,7 +111,7 @@ export const consultarProtocolo = async (protocolo: string): Promise<any> => {
 };
 
 /**
- * 🚀 TRANSMISSÃO EM XML PURO INDIVIDUAL (RECEPÇÃO DE NOTA DIRETA VIA mTLS)
+ * 🚀 TRANSMISSÃO EM XML PURO DIRETA SEM NECESSIDADE DE TOKEN (mTLS WebServices)
  */
 export const emitirNotaNacional = async (payloadRecebido: any) => {
   try {
@@ -201,16 +139,13 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       throw new Error("O payload recebido não contém um XML válido.");
     }
 
-    // Limpeza completa de quebras de linha e espaçamentos internos para transmissão linear limpa
     const xmlLimpoParaAssinar = xmlBruto.replace(/[\r\n]/g, '').replace(/>\s+</g, '><').trim();
     const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpoParaAssinar, keyPem, certPem);
 
-    const tokenValido = await obterBearerTokenADN(keyPem, certPem);
+    // 🎯 Endpoint Oficial de Produção mTLS puro do SERPRO (Não exige e ignora Token Bearer)
+    const urlEmissao = 'https://certificado.api.via.nfse.gov.br/webservices/recepcao/nfse';
 
-    // Endpoint homologado de Produção do SERPRO para recepção de XML individual assinado
-    const urlEmissao = 'https://certificado.api.via.nfse.gov.br/recepcao/nfse';
-
-    console.log(`📄 [SERPRO] Transmitindo XML Puro (${xmlAssinado.length} caracteres) via Handshake mTLS...`);
+    console.log(`📄 [SERPRO] Transmitindo via mTLS Direto Sem Token (${xmlAssinado.length} caracteres)...`);
 
     const agenteHttps = new https.Agent({
       key: keyPem,
@@ -218,19 +153,13 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       rejectUnauthorized: false
     });
 
-    const headersConfig: any = {
-      'Content-Type': 'application/xml; charset=utf-8',
-      'Accept': '*/*',
-      'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
-    };
-
-    if (tokenValido) {
-      headersConfig['Authorization'] = `Bearer ${tokenValido}`;
-    }
-
     const resposta = await axios.post(urlEmissao, xmlAssinado, {
       httpsAgent: agenteHttps,
-      headers: headersConfig,
+      headers: {
+        'Content-Type': 'application/xml; charset=utf-8',
+        'Accept': 'application/json, application/xml, */*',
+        'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
+      },
       transformRequest: [(data) => String(data)]
     });
 
@@ -249,7 +178,7 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
         ? JSON.stringify(error.response.data) 
         : String(error.response.data);
 
-      console.error(`❌ [ADN GOV REJECT] O governo recusou a requisição. Status HTTP: ${erroStatus}`);
+      console.error(`❌ [ADN GOV REJECT] Status HTTP: ${erroStatus}`);
       console.error(`❌ [ADN GOV MOTIVO DETALHADO]: ${erroDados}`);
 
       return { 
