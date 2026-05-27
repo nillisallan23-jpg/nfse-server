@@ -74,7 +74,7 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
 
     // 1. SOLICITAR BEARER TOKEN (Evita o Erro 404)
     console.log('🔑 [SERPRO] Solicitando Bearer Token via mTLS seguro...');
-    const urlToken = process.env.ADN_URL_TOKEN || 'https://certificado.api.via.nfse.gov.br/conectar/token';
+    const urlToken = process.env.ADN_URL_TOKEN || 'https://certificado.api.via.nfse.gov.br/v1/autenticacao/token';
 
     const dadosToken = qs.stringify({
       grant_type: 'client_credentials',
