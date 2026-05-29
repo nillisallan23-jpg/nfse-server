@@ -122,4 +122,33 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpo, keyPem, certPem);
 
     // Endpoint de recepção de produção
-    const urlEmissao = 'https://certificado
+    const urlEmissao = 'https://certificado.api.via.nfse.gov.br/recepcao/v1/nfse';
+    console.log(`📄 [SERPRO] Transmitindo XML para a rota oficial...`);
+
+    const resposta = await axios.post(urlEmissao, xmlAssinado, {
+      httpsAgent: agenteHttps,
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/xml; charset=utf-8',
+        'Accept': 'application/json'
+      }
+    });
+
+    return { 
+      sucesso: true, 
+      protocolo: resposta.data?.protocolo || resposta.data?.dados?.protocolo || `ADN_${Date.now()}`,
+      respostaRaw: resposta.data 
+    };
+
+  } catch (error: any) {
+    if (error.response) {
+      console.error(`❌ [ADN GOV REJECT] Status HTTP: ${error.response.status}`, error.response.data);
+      return { 
+        sucesso: false, 
+        mensagem: `Erro retornado pelo servidor do governo (Status ${error.response.status}).`, 
+        erros: [JSON.stringify(error.response.data)] 
+      };
+    }
+    return { sucesso: false, message: error.message };
+  }
+};
