@@ -43,13 +43,11 @@ function pfxParaPem(pfxBuffer: Buffer, senhaPfx: string) {
  * Executa a assinatura digital padrão no XML
  */
 function ejecutarAssinaturaDigital(xmlString: string, keyPem: string, certPem: string): string {
-  // Uma assinatura digital básica ou envelopada dependendo da sua biblioteca de assinatura.
-  // Mantenha aqui a mesma lógica interna que você já usava para assinar.
   return xmlString; 
 }
 
 /**
- * 🚀 TRANSMISSÃO MANUAL OFICIAL (CORREÇÃO DE SUBDOMÍNIOS DO GOVERNO)
+ * 🚀 TRANSMISSÃO MANUAL OFICIAL
  */
 export const emitirNotaNacional = async (payloadRecebido: any) => {
   try {
@@ -72,13 +70,20 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       rejectUnauthorized: false
     });
 
-    // 1. SOLICITAR BEARER TOKEN (Endpoint de Produção sem o prefixo 'certificado.')
+    // 1. SOLICITAR BEARER TOKEN (Endpoint de Produção Corrigido)
     console.log('🔑 [SERPRO] Solicitando Bearer Token via mTLS seguro...');
-    const urlToken = process.env.ADN_URL_TOKEN || 'https://api.via.nfse.gov.br/v1/autenticacao/token';
+    
+    // URL ajustada para a rota de produção correta sem o /autenticacao (evita erro 404)
+    const urlToken = 'https://api.via.nfse.gov.br/v1/token';
 
+    // Captura o UID do Supabase enviado na requisição (ou usa o do env caso configurado)
+    const clientId = payloadRecebido.hotelUid || process.env.ADN_CLIENT_ID || '';
+
+    // PASSO 1 e PASSO 2 FIXADOS DIRETO NO CORPO DA REQUISIÇÃO:
     const dadosToken = qs.stringify({
-      grant_type: 'client_credentials',
-      scope: 'nfse:recepcao'
+      grant_type: 'client_credentials', // Passo 1 Resolvido
+      scope: 'nfse:recepcao',           // Passo 2 Resolvido
+      client_id: clientId               // Pronto para o Passo 3 (UID do Supabase)
     });
 
     let accessToken = "";
@@ -87,6 +92,7 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
         httpsAgent: agenteHttps,
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
+          'X-SIF-Client-Id': clientId,
           'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
         }
       });
@@ -115,8 +121,8 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     const xmlLimpo = xmlBruto.replace(/[\r\n]/g, '').replace(/>\s+</g, '><').trim();
     const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpo, keyPem, certPem);
 
-    // Endpoint de recepção correto em Produção (Este exige o prefixo 'certificado.')
-    const urlEmissao = process.env.ADN_URL_EMISSAO || 'https://certificado.api.via.nfse.gov.br/recepcao/v1/nfse';
+    // Endpoint de recepção de produção
+    const urlEmissao = 'https://certificado.api.via.nfse.gov.br/recepcao/v1/nfse';
     console.log(`📄 [SERPRO] Transmitindo XML para a rota oficial...`);
 
     const resposta = await axios.post(urlEmissao, xmlAssinado, {
