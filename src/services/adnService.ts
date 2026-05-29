@@ -76,14 +76,14 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     // URL ajustada para a rota de produção correta sem o /autenticacao (evita erro 404)
     const urlToken = 'https://api.via.nfse.gov.br/v1/token';
 
-    // Captura o UID do Supabase enviado na requisição (ou usa o do env caso configurado)
-    const clientId = payloadRecebido.hotelUid || process.env.ADN_CLIENT_ID || '';
+    // AJUSTE PASSO 3: Dá prioridade para a variável salva no Railway ambiente
+    const clientId = process.env.ADN_CLIENT_ID || payloadRecebido.hotelUid || '';
 
     // PASSO 1 e PASSO 2 FIXADOS DIRETO NO CORPO DA REQUISIÇÃO:
     const dadosToken = qs.stringify({
       grant_type: 'client_credentials', // Passo 1 Resolvido
       scope: 'nfse:recepcao',           // Passo 2 Resolvido
-      client_id: clientId               // Pronto para o Passo 3 (UID do Supabase)
+      client_id: clientId               // Passo 3 Resolvido (Lendo o UID do Railway)
     });
 
     let accessToken = "";
@@ -122,33 +122,4 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpo, keyPem, certPem);
 
     // Endpoint de recepção de produção
-    const urlEmissao = 'https://certificado.api.via.nfse.gov.br/recepcao/v1/nfse';
-    console.log(`📄 [SERPRO] Transmitindo XML para a rota oficial...`);
-
-    const resposta = await axios.post(urlEmissao, xmlAssinado, {
-      httpsAgent: agenteHttps,
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/xml; charset=utf-8',
-        'Accept': 'application/json'
-      }
-    });
-
-    return { 
-      sucesso: true, 
-      protocolo: resposta.data?.protocolo || resposta.data?.dados?.protocolo || `ADN_${Date.now()}`,
-      respostaRaw: resposta.data 
-    };
-
-  } catch (error: any) {
-    if (error.response) {
-      console.error(`❌ [ADN GOV REJECT] Status HTTP: ${error.response.status}`, error.response.data);
-      return { 
-        sucesso: false, 
-        mensagem: `Erro retornado pelo servidor do governo (Status ${error.response.status}).`, 
-        erros: [JSON.stringify(error.response.data)] 
-      };
-    }
-    return { sucesso: false, message: error.message };
-  }
-};
+    const urlEmissao = 'https://certificado
