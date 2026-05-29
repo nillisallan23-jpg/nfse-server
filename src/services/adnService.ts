@@ -15,17 +15,14 @@ function pfxParaPem(pfxBuffer: Buffer, senhaPfx: string) {
   let chavePrivadaPem = '';
   let certificadoPem = '';
 
-  // Buscar Chave Privada
   for (const safeContents of pfx.safeContents) {
     for (const safeBag of safeContents.safeBags) {
       if (safeBag.key) {
-        const keyObj = safeBag.key;
-        chavePrivadaPem = forge.pki.privateKeyToPem(keyObj);
+        chavePrivadaPem = forge.pki.privateKeyToPem(safeBag.key);
       }
     }
   }
 
-  // Buscar Certificado
   const bags = pfx.getBags({ bagType: forge.pki.oids.certBag });
   const certBags = bags[forge.pki.oids.certBag] || [];
   if (certBags.length > 0 && certBags[0].cert) {
@@ -47,7 +44,7 @@ function ejecutarAssinaturaDigital(xmlString: string, keyPem: string, certPem: s
 }
 
 /**
- * 🚀 TRANSMISSÃO MANUAL OFICIAL
+ * 🚀 TRANSMISSÃO MANUAL OFICIAL CORRIGIDA
  */
 export const emitirNotaNacional = async (payloadRecebido: any) => {
   try {
@@ -64,22 +61,18 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
 
     const { keyPem, certPem } = pfxParaPem(pfxBuffer, pfxPassword);
 
-    // Configura o agente mTLS puro
     const agenteHttps = new https.Agent({
       key: keyPem,
       cert: certPem,
-      rejectUnauthorized: false // Em homologação/produção inicial ajuda a evitar travas de cadeia de CSC
+      rejectUnauthorized: false 
     });
 
-    // Endpoint de Produção do Token
-    const urlToken = 'https://api.via.nfse.gov.br/v1/token';
-
-    // ATENÇÃO: Agora a variável ADN_CLIENT_ID deve receber o CNPJ do Hotel (apenas números)
+    // ✨ URL CORRIGIDA: Sem o ".via." que causava o Erro 404
+    const urlToken = 'https://api.nfse.gov.br/v1/token';
     const clientId = process.env.ADN_CLIENT_ID || '';
 
-    console.log(`🔑 [SERPRO OAUTH] Solicitando token para o CNPJ/client_id: ${clientId}`);
+    console.log(`🔑 [SERPRO OAUTH] Tentando conexão na URL correta para o CNPJ: ${clientId}`);
 
-    // Corpo da requisição conforme apontado pela IA
     const dadosToken = qs.stringify({
       grant_type: 'client_credentials',
       scope: 'nfse:recepcao',
@@ -98,8 +91,7 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       accessToken = respostaToken.data.access_token;
       console.log('✅ [SERPRO] Token Bearer obtido com sucesso!');
     } catch (tokenErr: any) {
-      // Pega o erro detalhado exigido no diagnóstico
-      console.error('❌ [SERPRO TOKEN ERR] Erro detalhado do servidor:', tokenErr.response?.data || tokenErr.message);
+      console.error('❌ [SERPRO TOKEN ERR] Retorno do servidor do governo:', tokenErr.response?.data || tokenErr.message);
       return {
         sucesso: false,
         mensagem: "Falha na geração do Token de Acesso com o governo.",
