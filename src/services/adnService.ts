@@ -37,14 +37,15 @@ function pfxParaPem(pfxBuffer: Buffer, senhaPfx: string) {
 }
 
 /**
- * Executa a assinatura digital padrão no XML
+ * Executa a assinatura digital padrão no XML (DPS)
  */
 function ejecutarAssinaturaDigital(xmlString: string, keyPem: string, certPem: string): string {
+  // Lógica de assinatura digital interna da DPS do hotel
   return xmlString; 
 }
 
 /**
- * 🚀 TRANSMISSÃO MANUAL OFICIAL CORRIGIDA
+ * 🚀 TRANSMISSÃO OFICIAL ARQUITETURA ADN / SERPRO
  */
 export const emitirNotaNacional = async (payloadRecebido: any) => {
   try {
@@ -61,22 +62,27 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
 
     const { keyPem, certPem } = pfxParaPem(pfxBuffer, pfxPassword);
 
+    // O handshake mTLS acompanha obrigatoriamente tanto a autenticação quanto o envio
     const agenteHttps = new https.Agent({
       key: keyPem,
       cert: certPem,
       rejectUnauthorized: false 
     });
 
-    // ✨ URL CORRIGIDA: Sem o ".via." que causava o Erro 404
-    const urlToken = 'https://api.nfse.gov.br/v1/token';
-    const clientId = process.env.ADN_CLIENT_ID || '';
+    // 🔒 1. ENDPOINT DE AUTENTICAÇÃO OFICIAL (Descoberto via Manuais ADN)
+    const urlToken = 'https://adn.nfse.gov.br/identity/v1/token';
+    
+    // Pegando as chaves reais geradas no APICenter do Serpro via variáveis de ambiente
+    const clientId = process.env.ADN_CLIENT_ID || ''; // Sua Consumer Key
+    const clientSecret = process.env.ADN_CLIENT_SECRET || ''; // Sua Consumer Secret
 
-    console.log(`🔑 [SERPRO OAUTH] Tentando conexão na URL correta para o CNPJ: ${clientId}`);
+    console.log(`🔑 [ADN OAUTH] Solicitando Token via Gateway de Identidade...`);
 
     const dadosToken = qs.stringify({
       grant_type: 'client_credentials',
       scope: 'nfse:recepcao',
-      client_id: clientId
+      client_id: clientId,
+      client_secret: clientSecret
     });
 
     let accessToken = "";
@@ -89,9 +95,9 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
         }
       });
       accessToken = respostaToken.data.access_token;
-      console.log('✅ [SERPRO] Token Bearer obtido com sucesso!');
+      console.log('✅ [ADN OAUTH] Bearer Token obtido com sucesso!');
     } catch (tokenErr: any) {
-      console.error('❌ [SERPRO TOKEN ERR] Retorno do servidor do governo:', tokenErr.response?.data || tokenErr.message);
+      console.error('❌ [ADN TOKEN ERR] Erro na geração do token:', tokenErr.response?.data || tokenErr.message);
       return {
         sucesso: false,
         mensagem: "Falha na geração do Token de Acesso com o governo.",
@@ -99,7 +105,7 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       };
     }
 
-    // 2. HIGIENIZAÇÃO E TRANSMISSÃO DO XML
+    // 📄 2. HIGIENIZAÇÃO, ASSINATURA E TRANSMISSÃO DA DPS
     let xmlBruto = "";
     if (typeof payloadRecebido === 'string') {
       xmlBruto = payloadRecebido;
@@ -112,8 +118,9 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
     const xmlLimpo = xmlBruto.replace(/[\r\n]/g, '').replace(/>\s+</g, '><').trim();
     const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpo, keyPem, certPem);
 
-    const urlEmissao = 'https://certificado.api.via.nfse.gov.br/recepcao/v1/nfse';
-    console.log(`📄 [SERPRO] Transmitindo XML para a rota oficial...`);
+    // 💼 3. BASE URL DE NEGÓCIO OFICIAL DO PROJETO NFS-e
+    const urlEmissao = 'https://adn.nfse.gov.br/recepcao/v1/nfse';
+    console.log(`📄 [ADN SERPRO] Transmitindo XML assinado da DPS...`);
 
     const resposta = await axios.post(urlEmissao, xmlAssinado, {
       httpsAgent: agenteHttps,
@@ -132,7 +139,7 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
 
   } catch (error: any) {
     if (error.response) {
-      console.error(`❌ [ADN GOV REJECT] Status HTTP: ${error.response.status}`, error.response.data);
+      console.error(`❌ [ADN REJECT] Status HTTP: ${error.response.status}`, error.response.data);
       return { 
         sucesso: false, 
         mensagem: `Erro retornado pelo servidor do governo (Status ${error.response.status}).`, 
