@@ -64,26 +64,26 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
 
     const { keyPem, certPem } = pfxParaPem(pfxBuffer, pfxPassword);
 
+    // Configura o agente mTLS puro
     const agenteHttps = new https.Agent({
       key: keyPem,
       cert: certPem,
-      rejectUnauthorized: false
+      rejectUnauthorized: false // Em homologação/produção inicial ajuda a evitar travas de cadeia de CSC
     });
 
-    // 1. SOLICITAR BEARER TOKEN (Endpoint de Produção Corrigido)
-    console.log('🔑 [SERPRO] Solicitando Bearer Token via mTLS seguro...');
-    
-    // URL ajustada para a rota de produção correta sem o /autenticacao (evita erro 404)
+    // Endpoint de Produção do Token
     const urlToken = 'https://api.via.nfse.gov.br/v1/token';
 
-    // AJUSTE PASSO 3: Dá prioridade para a variável salva no Railway ambiente
-    const clientId = process.env.ADN_CLIENT_ID || payloadRecebido.hotelUid || '';
+    // ATENÇÃO: Agora a variável ADN_CLIENT_ID deve receber o CNPJ do Hotel (apenas números)
+    const clientId = process.env.ADN_CLIENT_ID || '';
 
-    // PASSO 1 e PASSO 2 FIXADOS DIRETO NO CORPO DA REQUISIÇÃO:
+    console.log(`🔑 [SERPRO OAUTH] Solicitando token para o CNPJ/client_id: ${clientId}`);
+
+    // Corpo da requisição conforme apontado pela IA
     const dadosToken = qs.stringify({
-      grant_type: 'client_credentials', // Passo 1 Resolvido
-      scope: 'nfse:recepcao',           // Passo 2 Resolvido
-      client_id: clientId               // Passo 3 Resolvido (Lendo o UID do Railway)
+      grant_type: 'client_credentials',
+      scope: 'nfse:recepcao',
+      client_id: clientId
     });
 
     let accessToken = "";
@@ -92,14 +92,14 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
         httpsAgent: agenteHttps,
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
-          'X-SIF-Client-Id': clientId,
           'User-Agent': 'Mozilla/5.0 ServidorNFSe/1.0'
         }
       });
       accessToken = respostaToken.data.access_token;
-      console.log('✅ [SERPRO] Token Bearer obtido com sucesso.');
+      console.log('✅ [SERPRO] Token Bearer obtido com sucesso!');
     } catch (tokenErr: any) {
-      console.error('❌ [SERPRO TOKEN ERR] Falha na autenticação OAuth2:', tokenErr.response?.data || tokenErr.message);
+      // Pega o erro detalhado exigido no diagnóstico
+      console.error('❌ [SERPRO TOKEN ERR] Erro detalhado do servidor:', tokenErr.response?.data || tokenErr.message);
       return {
         sucesso: false,
         mensagem: "Falha na geração do Token de Acesso com o governo.",
@@ -117,11 +117,9 @@ export const emitirNotaNacional = async (payloadRecebido: any) => {
       throw new Error("O payload recebido não contém um XML válido.");
     }
 
-    // Remove quebras de linha e espaços em branco entre as tags
     const xmlLimpo = xmlBruto.replace(/[\r\n]/g, '').replace(/>\s+</g, '><').trim();
     const xmlAssinado = ejecutarAssinaturaDigital(xmlLimpo, keyPem, certPem);
 
-    // Endpoint de recepção de produção
     const urlEmissao = 'https://certificado.api.via.nfse.gov.br/recepcao/v1/nfse';
     console.log(`📄 [SERPRO] Transmitindo XML para a rota oficial...`);
 
