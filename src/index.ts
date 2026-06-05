@@ -1,103 +1,166 @@
-import express from 'express';
-import * as adnService from './services/adnService';
+import puppeteer from 'puppeteer';
+import axios from 'axios';
+import dotenv from 'dotenv';
 
-const app = express();
+dotenv.config();
 
-/**
- * 🔒 CONFIGURAÇÃO DE CORS
- */
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
-});
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+
+// ID fixo do heartbeat que o Lovable está monitorando na interface
+const HEARTBEAT_ID = '00000000-0000-0000-0000-000000000001';
 
 /**
- * 🛡️ MIDDLEWARE NATIVO ANTI-ERRO 415 E 404
- * Configura o Express para aceitar qualquer XML vindo do Supabase como string pura no req.body
+ * 📝 Envia os logs de execução direto para a tabela do Supabase
  */
-app.use('/nfse/emitir', express.text({ type: ['application/xml', 'text/xml', '*/*'], limit: '10mb' }));
+async function registrarLog(level: 'INFO' | 'SUCESSO' | 'ERRO' | 'WARN', message: string, hotelId: string | null = null) {
+  const timestamp = new Date().toLocaleTimeString();
+  console.log(`[RPA] [${timestamp}] [${level}] ${message}`);
 
-// Fallbacks de decodificação normais para as demais rotas (como a de consulta)
-app.use(express.json({ limit: '10mb' })); 
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-/**
- * 💓 ROTA DE MONITORAMENTO (HEALTH CHECK)
- */
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'online' });
-});
-
-/**
- * 🚀 ROTA PRINCIPAL: RECEBE O XML, EFETUA A ASSINATURA E TRANSMITE
- */
-app.post('/nfse/emitir', async (req, res) => {
   try {
-    console.log('[RAILWAY] Nova requisição de emissão recebida com sucesso.');
-
-    if (!req.body || typeof req.body !== 'string' || req.body.trim().length === 0) {
-      console.error('[RAILWAY ERR] O corpo da requisição veio vazio ou não é uma string XML.');
-      return res.status(400).json({ sucesso: false, mensagem: 'Payload XML inválido ou vazio.' });
-    }
-
-    // Passa a string limpa para o adnService
-    const resultado = await adnService.emitirNotaNacional(req.body);
-    
-    return res.status(200).json(resultado);
-
-  } catch (erro: any) {
-    console.error('[RAILWAY ERR] Erro crítico na rota /nfse/emitir:', erro.message);
-    return res.status(500).json({ sucesso: false, mensagem: erro.message });
-  }
-});
-
-/**
- * 🔍 ROTA DE CONSULTA
- */
-app.get('/nfse/consultar/:protocolo', async (req, res) => {
-  try {
-    const { protocolo } = req.params;
-    console.log(`[RAILWAY] Consultando protocolo: ${protocolo}`);
-    
-    if (typeof (adnService as any).consultarProtocolo !== 'function') {
-      throw new Error("A função 'consultarProtocolo' ainda não foi implementada no adnService.");
-    }
-
-    const resultado = await (adnService as any).consultarProtocolo(protocolo);
-    const respostaComoAny = resultado as any;
-
-    if (respostaComoAny && (respostaComoAny.sucesso || respostaComoAny.codigoRetorno === 200)) {
-      return res.status(200).json({
-        sucesso: true,
-        dados: {
-          numeroNfse: respostaComoAny.numeroNfse || (respostaComoAny.dados?.numeroNfse) || null,
-          chaveAcesso: respostaComoAny.chaveAcesso || (respostaComoAny.dados?.chaveAcesso) || null,
-          xmlRetorno: respostaComoAny.xmlRetorno || (respostaComoAny.dados?.xmlRetorno) || null,
-          urlPdf: respostaComoAny.urlPdf || (respostaComoAny.dados?.urlPdf) || null,
-          urlXml: respostaComoAny.urlXml || (respostaComoAny.dados?.urlXml) || null
-        }
-      });
-    }
-
-    return res.status(200).json({
-      sucesso: false,
-      status: 'aguardando',
-      mensagem: 'Nota ainda em processamento na fila ou erro na resposta.',
-      detalhes: respostaComoAny
+    await axios.post(`${SUPABASE_URL}/rest/v1/robo_logs`, {
+      level,
+      message,
+      hotel_id: hotelId
+    }, {
+      headers: { 
+        'apikey': SUPABASE_ANON_KEY, 
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json'
+      }
     });
-
-  } catch (erro: any) {
-    console.error('[RAILWAY ERR] Erro na rota de consulta:', erro.message);
-    return res.status(500).json({ sucesso: false, message: erro.message });
+  } catch (error: any) {
+    console.error('[RPA ERR] Erro ao persistir log no Supabase:', error.message);
   }
-});
+}
 
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-  console.log(`🚀 SERVIDOR NFSE-SERVER ATIVO E ASSINANDO NA PORTA ${PORT}`);
-});
+/**
+ * 💓 Atualiza a saúde do robô para o painel do Lovable não dar "Offline"
+ */
+async function enviarHeartbeat(status: 'rodando' | 'aguardando' | 'erro') {
+  try {
+    await axios.patch(`${SUPABASE_URL}/rest/v1/robo_heartbeat?id=eq.${HEARTBEAT_ID}`, {
+      status_atual: status,
+      ultima_atividade: new Date().toISOString(),
+      memoria_uso: `${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`
+    }, {
+      headers: { 
+        'apikey': SUPABASE_ANON_KEY, 
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+  } catch (error: any) {
+    console.error('[RPA ERR] Erro ao enviar Heartbeat:', error.message);
+  }
+}
+
+/**
+ * 📥 Busca comandos pendentes enviados pelo botão "Executar Agora" do painel
+ */
+async function verificarComandosPendentes() {
+  try {
+    const resposta = await axios.get(`${SUPABASE_URL}/rest/v1/robo_comandos?status=eq.pendente&limit=1`, {
+      headers: { 
+        'apikey': SUPABASE_ANON_KEY, 
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}` 
+      }
+    });
+    return resposta.data[0] || null;
+  } catch (error: any) {
+    console.error('[RPA ERR] Erro ao buscar comandos na fila:', error.message);
+    return null;
+  }
+}
+
+/**
+ * 🔄 Atualiza o status do comando na fila de processamento
+ */
+async function atualizarStatusComando(id: string, status: 'executando' | 'concluido' | 'falha') {
+  try {
+    await axios.patch(`${SUPABASE_URL}/rest/v1/robo_comandos?id=eq.${id}`, {
+      status,
+      executado_em: status !== 'executando' ? new Date().toISOString() : null
+    }, {
+      headers: { 
+        'apikey': SUPABASE_ANON_KEY, 
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+  } catch (error: any) {
+    console.error('[RPA ERR] Erro ao atualizar status do comando:', error.message);
+  }
+}
+
+/* ==========================================================================
+   CORE DA AUTOMAÇÃO (PUPPETEER RASPAGEM)
+   ========================================================================== */
+
+async function rodarFluxoScraping() {
+  await enviarHeartbeat('rodando');
+  await registrarLog('INFO', 'Iniciando ciclo de varredura nos bancos...');
+
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: [
+      '--no-sandbox', 
+      '--disable-setuid-sandbox', 
+      '--disable-dev-shm-usage', 
+      '--disable-gpu'
+    ]
+  });
+  const page = await browser.newPage();
+
+  try {
+    await registrarLog('INFO', 'Navegador Puppeteer aberto com sucesso.');
+    
+    // 🏦 Aqui entrará a lógica de leitura da tabela `robo_bancos_config` 
+    // e o preenchimento dos seletores nos sites dos bancos.
+    
+    await registrarLog('SUCESSO', 'Varredura de teste concluída. Painel conectado.');
+
+  } catch (error: any) {
+    await registrarLog('ERRO', `Falha crítica durante a raspagem: ${error.message}`);
+    await enviarHeartbeat('erro');
+  } finally {
+    await browser.close();
+    await registrarLog('INFO', 'Navegador fechado. Aguardando próxima chamada.');
+    await enviarHeartbeat('aguardando');
+  }
+}
+
+/* ==========================================================================
+   FUNÇÃO DE INICIALIZAÇÃO (EXPORTADA PARA O INDEX.TS)
+   ========================================================================== */
+
+export function iniciarRoboExtrator() {
+  // 1. Loop do Heartbeat (Garante o sinal de vida a cada 30 segundos)
+  setInterval(() => { 
+    enviarHeartbeat('aguardando'); 
+  }, 30000);
+
+  // 2. Loop de Verificação da Fila (Checa se você clicou em "Executar Agora" a cada 10 segundos)
+  setInterval(async () => {
+    const comando = await verificarComandosPendentes();
+    if (comando) {
+      await registrarLog('INFO', `Comando [${comando.tipo}] detectado! Iniciando execução forçada...`);
+      await atualizarStatusComando(comando.id, 'executando');
+      try {
+        await rodarFluxoScraping();
+        await atualizarStatusComando(comando.id, 'concluido');
+      } catch {
+        await atualizarStatusComando(comando.id, 'falha');
+      }
+    }
+  }, 10000);
+
+  // 3. Loop de Rotina Automática (Roda sozinho a cada 60 segundos)
+  setInterval(async () => { 
+    await rodarFluxoScraping(); 
+  }, 60000);
+
+  // Inicialização imediata assim que o servidor Express liga
+  registrarLog('INFO', 'Módulo do Robô Extrator acoplado e ativo em segundo plano.');
+  enviarHeartbeat('aguardando');
+}
