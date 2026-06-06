@@ -7,6 +7,7 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:robo": "node dist/rpaWorker.js",
     "clean": "rm -rf dist"
   },
   "dependencies": {
